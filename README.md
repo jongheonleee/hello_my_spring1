@@ -1,12 +1,16 @@
 # Hello My Spring 🙋🏻‍♂️ 
 
-### 01. 오브젝트와 의존관계
+<br>
 
-### 02. 테스트
+## 📌 01. 오브젝트와 의존관계
 
+<br>
+<br>
+
+## 📌 02. 테스트
 
 #### 🧑🏻‍🏫 주요 내용 작성
-<img src="" width="800" height="500"/>
+<img src="https://github.com/user-attachments/assets/cadc06f2-a56a-4d64-ad2c-2a4d70ea0cf0" width="800" height="500"/>
 
 
 #### 👉 테스트를 작성하는 것의 의미
