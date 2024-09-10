@@ -5,11 +5,11 @@
 ## 📌 01. 오브젝트와 의존관계
 
 #### 🧑🏻‍🏫 주요 내용 작성 - 오브젝트
-<img src="https://github.com/user-attachments/assets/cadc06f2-a56a-4d64-ad2c-2a4d70ea0cf0" width="800" height="500"/>
+<img src="/images/스프링오브젝트.jpeg" width="800" height="500"/>
 
 
 #### 🧑🏻‍🏫 주요 내용 작성 - 스프링 컨테이너
-<img src="https://github.com/user-attachments/assets/cadc06f2-a56a-4d64-ad2c-2a4d70ea0cf0" width="800" height="500"/>
+<img src="/images/스프링컨테이너.jpeg" width="800" height="500"/>
 
 
 <br>
@@ -41,7 +41,7 @@
 ## 📌 02. 테스트
 
 #### 🧑🏻‍🏫 주요 내용 작성
-<img src="https://github.com/user-attachments/assets/cadc06f2-a56a-4d64-ad2c-2a4d70ea0cf0" width="800" height="500"/>
+<img src="/images/스프링테스트.jpeg" width="800" height="500"/>
 
 
 #### 👉 테스트를 작성하는 것의 의미
