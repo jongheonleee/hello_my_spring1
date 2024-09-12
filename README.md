@@ -155,3 +155,101 @@
 > - 자신이 사용할 API나 프레임워크, 아니면 객체 등등을 직접 테스트해 보면서 익히는 과정
 > - 머리로 이해하는 것에는 한계가 있기에 직접 학습 테스트 코드를 작성함으로써 이해도를 높일 수 있음
 
+<br>
+<br>
+
+## 📌 03. OCP 충족을 위해 스프링에서 애용하는 '템플릿' 기법
+
+#### 🧑🏻‍🏫 주요 내용 작성
+
+<img src="" width="800" height="500"/>
+
+#### 👉 템플릿이란?
+
+> - 전체 맥락을 템플릿이라고 말함. 즉, 전체 맥락이 되는 템플릿을 구성하고 그 하위 클래스나 콜백 ... 으로 세부 내용을 결정하는 방식
+> - 위와 같은 기법을 사용하는 이유는 OCP를 충족하기 위함
+> - 변경되지 않고 반복되는 부분은 '템플릿'으로 구성하여 최대한 재활용하고 변경되는 부분은 분리해내서 확장하기 좋게 만든 구조
+
+<br>
+
+#### 👉 템플릿이 적용되는 대표적인 사례 - JDBC(try - catch - finally)
+
+```java
+public class UserDao {
+
+    private static final String URL = "jdbc:mysql://localhost:3306/yourdb";
+    private static final String USER = "root";
+    private static final String PASSWORD = "password";
+
+    public User findById(Long id) {
+        Connection conn = null;
+        PreparedStatement pstmt = null;
+        ResultSet rs = null;
+
+        try {
+            // 1. 데이터베이스 연결
+            conn = DriverManager.getConnection(URL, USER, PASSWORD);
+
+            // 2. SQL 준비
+            String sql = "SELECT * FROM users WHERE id = ?";
+            pstmt = conn.prepareStatement(sql);
+            pstmt.setLong(1, id);
+
+            // 3. SQL 실행 및 결과 처리
+            rs = pstmt.executeQuery();
+            if (rs.next()) {
+                User user = new User();
+                user.setId(rs.getLong("id"));
+                user.setName(rs.getString("name"));
+                user.setEmail(rs.getString("email"));
+                return user;
+            }
+        } catch (SQLException e) {
+            e.printStackTrace(); // 예외 처리 (간단히 출력)
+        } finally {
+            // 4. 리소스 해제 (항상 실행됨)
+            try {
+                if (rs != null) rs.close();
+                if (pstmt != null) pstmt.close();
+                if (conn != null) conn.close();
+            } catch (SQLException e) {
+                e.printStackTrace(); // 리소스 해제 중 예외 발생 시 처리
+            }
+        }
+        return null;
+    }
+}
+
+```
+
+> - 전통적인 JDBC 코드를 나타냄. 해당 코드의 문제점 아래와 같음
+> - (1) 복잡한 try-catch-finally 구조가 중첩됨
+> - (2) 모든 메서드마다 반복됨
+> - 즉, 위의 문제점이 발생하는 이유는 OCP를 충족하지 못한 코드이기 때문임
+> - 문제의 핵심은 변하지 않고 중복되는 코드와 로직에 따라 자주 확장하려고 변하는 코드를 잘 분리해야함 
+
+<br>
+
+#### 👉 OCP를 충족시키는 대표적인 디자인 패턴 - Template Method, Strategy
+
+> - Template Method 패턴은 상속을 통해 기능을 확장해 나감
+> - 즉, 상위에서 맥락을 정해두고 하위에서 세부 내용을 결정하여 OCP를 충족시키는 디자인 패턴
+> - <img src="/images/템플릿메서드.jpeg" width="400" height="400"/>
+> - Template Method 패턴의 한계점
+> - (1) Dao 로직마다 상속을 통해 새로운 클래스를 만들어야함
+> - (2) 상위 클래스와 하위 클래스 간의 긴밀한 관계 형성
+> - (3) 클래스 레벨에서 컴파일 시점에 이미 그 관계가 결정되어버리기 때문에 유연하지 못함 
+
+
+> - Strategy 패턴은 합성을 통해 기능을 확장해 나감. 즉, 변경되는 부분을 외부로 분리해 놓은 것 
+> - 변경되는 부분을 클래스 레벨에서 분리해서 인터페이스를 통해서만 의존하도록 만듦
+> - 확장에 해당하는 부분을 별도의 클래스로 만들어 추상화된 인터페이스를 통해 위임하는 방식
+> - <img src="/images/전략.jpeg" width="400" height="400"/>
+> - Strategy 패턴의 한계점
+> - (1) Dao 메서드마다 새로운 Strategy 클래스를 만들어야함
+> - (2) 부가적인 정보가 필요한 경우, 인스턴스 변수(iv)로 저장해야함(번거로움)
+
+
+> - Strategy & DI 활용
+> - <img src="/images/전략&DI.jpeg" width="400" height="400"/>
+> - DI는 Strategy 패턴의 장점을 일반적으로 활용할 수 있도록 만든 구조
