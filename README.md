@@ -232,7 +232,7 @@ public class UserDao {
 
 #### 👉 OCP를 충족시키는 대표적인 디자인 패턴 - Template Method, Strategy
 
-> - Template Method 패턴은 상속을 통해 기능을 확장해 나감
+> #### Template Method 패턴은 상속을 통해 기능을 확장해 나감
 > - 즉, 상위에서 맥락을 정해두고 하위에서 세부 내용을 결정하여 OCP를 충족시키는 디자인 패턴
 > - <img src="/images/템플릿메서드.jpeg" width="400" height="400"/>
 > - Template Method 패턴의 한계점
@@ -240,8 +240,9 @@ public class UserDao {
 > - (2) 상위 클래스와 하위 클래스 간의 긴밀한 관계 형성
 > - (3) 클래스 레벨에서 컴파일 시점에 이미 그 관계가 결정되어버리기 때문에 유연하지 못함 
 
+<br>
 
-> - Strategy 패턴은 합성을 통해 기능을 확장해 나감. 즉, 변경되는 부분을 외부로 분리해 놓은 것 
+> #### Strategy 패턴은 합성을 통해 기능을 확장해 나감. 즉, 변경되는 부분을 외부로 분리해 놓은 것 
 > - 변경되는 부분을 클래스 레벨에서 분리해서 인터페이스를 통해서만 의존하도록 만듦
 > - 확장에 해당하는 부분을 별도의 클래스로 만들어 추상화된 인터페이스를 통해 위임하는 방식
 > - <img src="/images/전략.jpeg" width="400" height="400"/>
@@ -249,7 +250,8 @@ public class UserDao {
 > - (1) Dao 메서드마다 새로운 Strategy 클래스를 만들어야함
 > - (2) 부가적인 정보가 필요한 경우, 인스턴스 변수(iv)로 저장해야함(번거로움)
 
+<br>
 
-> - Strategy & DI 활용
+> #### Strategy & DI 활용
 > - <img src="/images/전략&DI.jpeg" width="400" height="400"/>
 > - DI는 Strategy 패턴의 장점을 일반적으로 활용할 수 있도록 만든 구조
