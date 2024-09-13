@@ -162,7 +162,7 @@
 
 #### 🧑🏻‍🏫 주요 내용 작성
 
-<img src="" width="800" height="500"/>
+<img src="/images/템플릿학습정리.jpeg" width="800" height="500"/>
 
 #### 👉 템플릿이란?
 
@@ -291,7 +291,7 @@ public class UserDao {
 
 #### 👉 템플릿/콜백 동작 방식
 
-> - <img src="/images/템플릿콜백동작방식.jpeg" width="400" height="400"/>
+> - <img src="/images/템플릿콜백작동원리.png" width="400" height="400"/>
 > - 단순하게 DI 방식의 전략 패턴 구조라고 생각하면됨. 전략 패턴과 DI의 장점을 익명 내부 클래스 사용 전략과 결합한 독특한 구조
 > - 템플릿/콜백 패턴의 특징은 크게 3가지가 있음
 > - (1) 매번 메서드 단위로 사용할 오브젝트를 새롭게 전달해야함
@@ -302,8 +302,7 @@ public class UserDao {
 
 #### 👉 JdbcContext에 적용된 템플릿/콜백 패턴 
 
-> - <img src="/images/JdbcContext템플릿콜백동작방식.jpeg" width="400" height="400"/>
-> - <img src="/images/JdbcContext템플릿콜백동작방식2.jpeg" width="400" height="400"/>
+> - <img src="/images/JdbcContext템플릿콜백적용.png" width="400" height="400"/>
 > - 콜백의 분리와 재활용. 콜백에서 재활용할 수 있는 부분과 변경되는 부분을 찾아서 다시 분리함. 이 과정을 통해서 SQL 문장만 파라미터로 바꿀 수 있게 하고 메서드 내용 전체를 분리하여 별도의 메서드로 만듦
 
 ```java
