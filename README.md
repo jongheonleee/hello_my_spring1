@@ -499,3 +499,345 @@ public class UserDao {
 ```
 
 <br>
+
+
+## 📌 04. 스프링에서의 예외 처리
+
+#### 🧑🏻‍🏫 주요 내용 작성
+
+<img src="" width="800" height="500"/>
+
+<br>
+
+#### 👉 예외처리에서 하지 말아야할 행동
+
+```java
+// (1) 예외 은폐하기
+
+try {
+    // 예외 발생 가능 로직 
+} catch (SqlException e) {
+    // 마땅한 예외 처리 로직 없음
+}
+
+
+try {
+    // 예외 발생 가능 로직 
+} catch (SqlException e) {
+    e.printStackTrace();
+}
+
+
+// (2) 무의미하고 무책임한 throws 
+
+public void method() throws Exception {
+    // 예외 발생 가능 로직 
+    method1();
+}
+
+public void method1() throws Exception {
+    // 예외 발생 가능 로직 
+    method2();
+}
+
+public void method2() throws Exception {
+    // 예외 발생 가능 로직
+}
+
+```
+> - (1) 예외 은폐하기
+>   - 예외를 잡고 마땅한 처리를 하지 않음
+>   - 예외 처리시 명심해야 하는 부분은 '모든 예외는 적절하게 복구되든지 아니면 작업을 중단시키고 운영자나 개발자에게 분명하고 빠르게 통보해야함'
+> - (2) 무의미하고 무책임한 throws 
+>   - throws Exception을 별 생각 없이 남발하면 안됨
+>   - 예외 발생 부분을 명확히 파악하기 어려움 
+
+
+<br>
+
+#### 👉 예외의 종류와 특징
+
+> - Error : 시스템에 뭔가 비정상적인 상황이 발생한 경우, catch 블록으로 잡아 봤자 아무런 대응 방법이 없음. 예를들어, OutOfMemoryError, StackOverflowError 등
+> - <img src="/images/예외상속계층도.png" width="400" height="400"/>
+> - RuntimeException : 개발자의 부주의로 발생하는 예외. 예를들어, NullPointerException, IllegalArgumentException, IndexOutOfBoundsException 등
+>   - 예외처리를 강제하지 않음
+>   - 주로 프로그램의 오류가 있을 때 예외가 발생하도록 의도된 것
+>   - 개발자의 부주의로 인해 발생하는 경우 
+> - Checked Exception : 컴파일러가 강제로 예외 처리를 요구하는 예외. 예를들어, IOException, SQLException 등
+>   - 예외처리를 강제함. 즉, try-catch로 예외를 처리하든가 호출한 쪽에서 전달해서 처리하게끔 만들어야함 
+>   - 사용자의 부주의로 인해 발생할 수 있는 예외
+
+<br>
+
+#### 👉 예외처리 방법 -> 예외 복구/ 예외처리 회피/ 예외 전환
+
+```java
+// (1) 재시도 : 일정 시간 동안 대기했다가 최대 횟수 만큼 시도를 해보는 것
+
+import java.sql.SQLException;
+
+int maxretry = MAX_RETRY;
+
+while(maxretry-->0){
+    try{
+        // 예외 발생 가능 로직  
+        return; // 작업 성공 
+    }catch(SomeException e){
+        // 로그 출력, 정해진 시간만큼 대기
+    }finally{
+        // 리소스 반납, 정리 작업 
+    }
+}
+
+// (2) 예외처리 회피 : 예외를 처리하지 않고 자신을 호출한 쪽으로 예외를 전달함 
+
+public void add() throws SQLException {
+    try {
+        // JDBC API
+    } catch (SQLException e) {
+        // 로그 출력
+        throw e;
+    }
+}
+
+
+// (3) 예외 전환 : 예외를 다른 예외로 전환하는 방법
+public void add(User user) throws DuplicateUserIdException, SQLException {
+    try {
+        // 예외 발생 가능한 로직 
+    } catch (SQLException e) {
+        if (e.getErrorCode() == MysqlErrorNumbers.ER_DUP_ENTRY) {
+            throw new DuplicateUserIdException(e); // 예외 전환 
+        } else {
+            throw e;
+        }
+    }
+}
+
+```
+
+> - (1) 예외 복구 : 예외가 발생했을 때 복구해서 정상적인 상태로 만듦
+>   - 예외 상황을 파악하고 문제를 해결하며 정상 상태로 되돌림
+>   - 대표적인 예시는 네트워크가 불안하여 서버 접속이 원할치 않은 경우 재시도(재접속)을 통해 복구함
+>   - 재시도 : 일정 시간 동안 대기했다가 최대 횟수 만큼 시도를 해보는 것 
+>     - 일정 시간 대기했다가 다시 접속을 시도해보는 방법
+>     - 예외 상황으로부터 복구를 시도함
+>     - 실패했다면 예외 복구 포기
+>
+> - (2) 예외처리 회피 : 예외를 처리하지 않고 자신을 호출한 쪽으로 예외를 전달함 
+>   - 의도가 분명할 때 사용해야함. 즉, 자신을 사용하는 쪽에서 예외를 다루는게 최선의 방법이라는 판단이 있어야함
+> 
+> - (3) 예외 전환 : 예외를 다른 예외로 전환하는 방법
+>   - 발생한 예외를 그대로 전달하는 것이 아닌, 적절한 예외로 전환해서 전달해야함. 예외를 전환하는 이유에는 크게 두가지가 있음
+>   - (1) 의미를 명확하게 하기 위해 사용 - Dao에서 SQLException은 예외 전환해서 던지는 게 좋음(의미가 불분명하기 때문)
+>   - (2) 특정 기술의 정보를 해석하는 코드를 비즈니스 로직에 담는 것은 어색함. 즉, 특정 계층에 종속되지 않게 하기위해 예외를 전환함
+>   - 예외 전환 방법 크게 두가지가 있음 
+>   - (1) 중첩 예외 : 전환하는 예외에 원래 예외를 담음
+>   - (2) 포장 : 의미를 명확하게 하기보다는 체크 예외를 언체크(런타임) 예외로 바꾸기 위함 
+>     - 클라이언트에서 일일이 예외를 잡아도 마땅한 대처 방법이 없음
+>     - 런타임 예외로 포장해서 전달하고 예외 처리 서비스 등을 이용하여 로그를 남기고, 관리자에게 메일 ... 을 통보하고 사용자에게 친절한 안내 메시지를 보여주는 식으로 처리하는게 좋음
+
+
+<br>
+
+#### 👉 예외처리 전략
+
+
+```java
+// (2) 정상적인 흐름을 따르는 코드는 그대로 두고 잔고 부족과 같은 예외 상황에서는 비즈니스적 의미를 띤 예외를 발생시킴 - InsufficientBalanceException
+
+try {
+    BigDecimal balance = account.withdraw(amount);
+    // 정상적인 흐름을 따르는 코드
+} catch (InsufficientBalanceException e) {
+    // 예외 처리 로직
+    BigDecimal availFunds = e.getAvailFunds();
+    
+    // 잔고 부족 안내 메시지 준비. 이를 출력하도록 진행 
+} 
+
+
+```
+
+> #### 런타임 예외의 일반화
+> - 체크 예외가 일반적인 예외를 다루고 런타임 예외(언체크 예외)는 시스템 장애나 프로그램상의 오류에 사용
+> - 어차피 런타임 예외이므로 시스템 레벨에서 알아서 처리해줄 것이고 꼭 필요한 경우는 런타임 예외라도 잡아서 복구하거나 대응할 수 있음
+> 
+> #### 애플리케이션 예외
+> - 애플리케이션 자체의 로직에 의해 의도적으로 발생시키고 반드시 catch로 대처하도록 요구하는 예외
+> - 예를들어서, 사용자가 요청한 금액을 은행 계좌에서 출금하는 기능을 가진 메서드가 있음. 현재 잔고를 확인하고 허용 범위를 넘어서는 출금을 요청하면 작업을 중단시키고 적절한 경고를 사용자에게 보내야함
+> - (1) 리턴 값을 일종의 결과 상태를 나타내는 정보로 활용함 - 0, -1, -999
+> - (2) 정상적인 흐름을 따르는 코드는 그대로 두고 잔고 부족과 같은 예외 상황에서는 비즈니스적 의미를 띤 예외를 발생시킴 - InsufficientBalanceException
+>   - 해당 방식이 좋음
+>   - 해당 예외를 '체크 예외'로 만듦. 잔고 부족처럼 자주 발생 가능한 예외상황에 대한 로직을 구현하도록 강제함 
+
+
+<br>
+
+#### 👉 스프링에서의 SQLException 처리 
+
+> - SQLException의 경우 99%가 코드 레벨에서 복구 불가능함
+> - 가장 효율적인 대처 방안은 '관리자나 개발자에게 빠르게 예외가 발생했다는 사실을 통보하는 것'
+> - SQLException는 복구 불가능하기에 무분별한 throws 선언이 등장하도록 방치하지 않고 가능한 빨리 언체크(런타임) 예외로 전환해줌
+> - 위와 같이 예외 전환의 의의는 크게 2가지가 있음
+> - (1) 불필요한 catch/throws 선언을 줄임
+> - (2) 예외를 좀 더 의미있고 추상화된 예외로 전환
+
+
+<br>
+
+#### 👉 JDBC의 한계
+
+> - DB 기술을 자유롭게 바꾸어 사용하기에는 어려움. 크게 2가지 이유가 있음
+> - (1) 비표준 SQL 
+>   - 대부분의 DB는 표준을 따르지 않고 비표준 문법과 기능을 제공함. 예를들어서, 페이징 처리할 때 MySQL은 limit, offset을 사용하고 Oracle은 rownum을 사용함
+>   - 비표준 SQL은 결국 DAO 코드에 명시되고 DAO는 특정 DB에 종속되어 버림
+>   - DAO를 DB 별로 만들어 사용하거나 SQL을 외부에서 독립시켜 바꿔 쓸수있게 만듦
+> - (2) 호환성 없는 SQLException의 DB 에러 정보
+>   - DB마다 SQL만 다른 것이 아니라 예외의 종류와 원인들도 제각각임
+>   - JDBC는 다양한 예외를 SQLException 하나에 담음. 그로인해, SQLException의 getErrorCode()로 조회되는 DB에러 코드는 DB별로 상이함
+>   - 결국, 호환성 없는 에러코드와 표준을 잘 따르지 않는 상태 코드를 가진 SQLException만으로 DB에 독립적인 유욘한 코드를 작성하는 것은 불가능함 
+
+<br>
+
+#### 👉 DB에러 코드 매핑을 통한 전환
+
+> - 문제는 SQLException의 비표준 에러 코드와 SQL 상태 정보를 어떻게 다루느냐임
+> - DB별 에러 코드를 참고해서 발생한 예외의 원인이 무엇인지 해석해주는 기능을 만드는 것
+> - 스프링은 DB별 에러 코드를 분류해서 스프링이 정의한 예외 클래스와 매핑해놓은 에러 코드 매핑정보 테이블을 만들어두고 활용함 
+>   - <img src="/images/오라클에러코드매핑.png" width="400" height="400"/>
+> - 스프링에서는 DataAccessException 이라는 SQLException을 대체할 수 있는 런타임 예외 정의
+>   - 이 하위 클래스에는 세분화된 예외 클래스들이 정의됨 - DuplicateKeyException, DataIntegrityViolationException, BadSqlGrammarException 등
+
+
+<br>
+
+#### 👉 스프링이 DataAccessException 계층 구조를 이용해 기술에 독립적인 예외를 정의하고 사용하게 하는 이유 -> 서비스 계층이 기술에 종속되는 것을 막기 위함
+
+```java
+
+// JDBC API
+public void add(User user) throws SQLException;
+
+// JPA API
+public void add(User user) throws PersistenceException;
+
+// Hibernate API
+public void add(User user) throws HibernateException;
+
+// JDO API
+public void add(User user) throws JDOException;
+
+```
+
+> - DAO에서 사용되는 데이터 액세스 기술의 API 특정 예외에 종속시키지 않기 위함
+> - DAO를 인터페이스로 분리하여 메서드 구현을 추상화 했지만, 구현 기술마다 발생하는 예외가 다르기에 메서드의 선언이 달라짐 
+> - 문제는 DAO를 사용하는 클라이언트 입장에서는 DAO의 사용 기술에 따라 예외 처리가 달라져야함. 즉, 클라이언트가 DAO의 기술에 의존적이게 되어버림
+
+
+<br>
+
+#### 👉 데이터 액세스 예외 추상화와 DataAccessExcetion 계층 구조
+
+> - <img src="/images/DataAccessException상속계층도.png" width="400" height="400"/>
+> - 스프링에서는 위의 문제를 해결하고자 데이터 액세스 기술을 사용할 때 발생하는 예외들을 모두 추상화해서 DataAccessException 계층 구조 안에 정의함
+> - <img src="/images/UserDao인터페이스와구현의분리.jpeg" width="400" height="400"/>
+> - 이를 통해, DAO를 사용하는 클라이언트는 특정 기술에 종속되지 않도록 만듦
+
+<br>
+
+#### 👉 DataAccessException 활용시 주의사항
+
+> - 스프링의 DataAccessException이 기술에 상관없이 어느정도 추상화된 공통 예외를 변환해주긴 하지만 한계가 있음
+> - 예를들어서, 키 값이 중복되는 상황에서는 JDBC의 경우 DuplocatedKeyException이 발생하지만, Hibernate에서는 DataIntegrityViolationException이 발생함
+> - DataAccessException을 잡아서 처리하는 코드를 만들려면 학습 테스트로 충분히 파악하고 진행하는 것이 좋음
+
+
+<br>
+
+#### 👉 커스텀 예외 변환기, 전역 예외 처리기 
+
+```java
+// (1) 커스텀 예외 변환기 사용
+// 커스텀 예외 변환기 정의 
+public class CustomSQLExceptionTranslator extends SQLErrorCodeSQLExceptionTranslator {
+
+    public CustomSQLExceptionTranslator(DataSource dataSource) {
+        super(dataSource);
+    }
+
+    @Override
+    protected DataAccessException customTranslate(String task, String sql, SQLException ex) {
+        // SQL 상태 코드나 SQL 예외 메시지를 기준으로 커스텀 예외 처리를 구현
+        if (ex.getErrorCode() == SOME_DUPLICATE_KEY_ERROR_CODE) {
+            return new DuplicateKeyException("중복된 키 에러 발생", ex);
+        }
+        if (ex.getErrorCode() == SOME_INTEGRITY_VIOLATION_ERROR_CODE) {
+            return new DataIntegrityViolationException("데이터 무결성 위반", ex);
+        }
+        // 기본 Spring 예외 변환으로 처리하지 못한 예외는 부모 클래스로 위임
+        return super.customTranslate(task, sql, ex);
+    }
+}
+
+
+// 커스텀 예외 변환기 빈 등록, 추후에 사용할 오브젝트에 주입해줘야함 
+@Bean
+public CustomSQLExceptionTranslator exceptionTranslator(DataSource dataSource) {
+    return new CustomSQLExceptionTranslator(dataSource);
+}
+
+
+// (2) 전역 예외 처리기 사용 
+@ControllerAdvice
+public class GlobalExceptionHandler {
+
+    @ExceptionHandler(DuplicateKeyException.class)
+    public ResponseEntity<String> handleDuplicateKeyException(DuplicateKeyException ex) {
+        return new ResponseEntity<>("중복된 키 에러: " + ex.getMessage(), HttpStatus.CONFLICT);
+    }
+
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ResponseEntity<String> handleDataIntegrityViolationException(DataIntegrityViolationException ex) {
+        return new ResponseEntity<>("데이터 무결성 위반: " + ex.getMessage(), HttpStatus.BAD_REQUEST);
+    }
+    
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<String> handleGeneralException(Exception ex) {
+        return new ResponseEntity<>("예기치 못한 오류: " + ex.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+}
+
+
+// (3) AOP 기능 활용 - 커스텀 예외 변환기와 AOP를 동시에 적용함 
+@Aspect
+@Component
+public class ExceptionTranslationAspect {
+
+    private final CustomSQLExceptionTranslator exceptionTranslator;
+
+    @Autowired
+    public ExceptionTranslationAspect(CustomSQLExceptionTranslator exceptionTranslator) {
+        this.exceptionTranslator = exceptionTranslator;
+    }
+
+    @Around("execution(* com.example.repository.*.*(..))")
+    public Object translateException(ProceedingJoinPoint pjp) throws Throwable {
+        try {
+            return pjp.proceed();
+        } catch (SQLException ex) {
+            throw exceptionTranslator.translate(pjp.getSignature().getName(), null, ex);
+        }
+    }
+}
+
+```
+
+
+> - 위의 문제를 다시 살펴보면, 중복 키가 발생한 상황에서 각 기술마다 발생되는 DataAccessException이 다름
+> - JDBC는 DuplicatedKeyException이고 Hibernate는 DataIntegrityViolationException임
+> - 이를 효율적으로 대처하는 방식은 크게 2가지가 있음
+> - (1) 커스텀 예외 변환기 사용
+>   - 각 기술의 예외를 표준화된 방식으로 처리할 수 있는 예외 변환기
+> - (2) 전역 예외 처리기 사용
+>   - AOP나 스프링의 @ControllerAdvice 같은 예외처리 메커니즘을 사용하여 일관된 방식으로 처리 
