@@ -307,7 +307,142 @@ public class UserDao {
 > - 콜백의 분리와 재활용. 콜백에서 재활용할 수 있는 부분과 변경되는 부분을 찾아서 다시 분리함. 이 과정을 통해서 SQL 문장만 파라미터로 바꿀 수 있게 하고 메서드 내용 전체를 분리하여 별도의 메서드로 만듦
 
 ```java
-// 추후에 업데이트
+/**
+ * 클래스 관계 : UserDao -> JdbcContext -> DataSource
+ * 런타임 의존관계 : UserDao : userDao -> JdbcContext : jdbcContext -> DataSource : simpleDriverDataSource
+ */
+
+// JdbcContext.java
+public class JdbcContext {
+    DataSource dataSource;
+
+    // 의존 오브젝트(DataSource) 주입 받음
+    public void setDataSource(DataSource dataSource) {
+        this.dataSource = dataSource;
+    }
+
+    // Jdbc 작업 맥락 구성 
+    public void workWithStatementStrategy(StatementStrategy stmt) throws SQLException {
+        // 참조 정보 취득
+        Connection c = null;
+        PreparedStatement ps = null;
+
+        try {
+            // 커넥션 취득 (맥락)
+            c = dataSource.getConnection();
+
+            // 자주 변경되는 부분(외부에서 파라미터로 주입받음, 콜백)
+            ps = stmt.makePreparedStatement(c);
+
+            // SQL 실행(맥락)
+            ps.executeUpdate();
+        } catch (SQLException e) { // 예외 처리(맥락)
+            throw e;
+        } finally { // 자원 반납(맥락)
+            if (ps != null) { try { ps.close(); } catch (SQLException e) {} }
+            if (c != null) { try {c.close(); } catch (SQLException e) {} }
+        }
+    }
+
+    // 템플릿/콜백 패턴의 클라이언트
+    public void executeSql(final String query) throws SQLException {
+        workWithStatementStrategy(
+                // 템플릿/콜백 패턴의 콜백 
+                new StatementStrategy() {
+                    public PreparedStatement makePreparedStatement(Connection c)
+                            throws SQLException {
+                        // 실질적으로 변경되는 부분은 'query' 부분
+                        // 따라서, 응집력이 강한 클라이언트, 콜백, 템플릿을 한군데로 모아둠 
+                        return c.prepareStatement(query);
+                    }
+                }
+        );
+    }
+}
+
+
+// UserDao.java
+public class UserDao {
+    private DataSource dataSource;
+
+    public void setDataSource(DataSource dataSource) {
+        this.jdbcContext = new JdbcContext();
+        this.jdbcContext.setDataSource(dataSource);
+        this.dataSource = dataSource;
+    }
+
+    private JdbcContext jdbcContext; // 템플릿 
+
+    public void add(final User user) throws SQLException { // 클라이언트 
+        this.jdbcContext.workWithStatementStrategy(
+                // 콜백(단일 메서드 인터페이스를 구현한 익명 내부 클래스)
+                new StatementStrategy() {
+                    public PreparedStatement makePreparedStatement(Connection c)
+                            throws SQLException {
+                        PreparedStatement ps =
+                                c.prepareStatement("insert into users(id, name, password) values(?,?,?)");
+                        ps.setString(1, user.getId());
+                        ps.setString(2, user.getName());
+                        ps.setString(3, user.getPassword());
+
+                        return ps;
+                    }
+                }
+        );
+    }
+
+
+    public User get(String id) throws SQLException {
+        Connection c = this.dataSource.getConnection();
+        PreparedStatement ps = c
+                .prepareStatement("select * from users where id = ?");
+        ps.setString(1, id);
+
+        ResultSet rs = ps.executeQuery();
+
+        User user = null;
+        if (rs.next()) {
+            user = new User();
+            user.setId(rs.getString("id"));
+            user.setName(rs.getString("name"));
+            user.setPassword(rs.getString("password"));
+        }
+
+        rs.close();
+        ps.close();
+        c.close();
+
+        if (user == null) throw new EmptyResultDataAccessException(1);
+
+        return user;
+    }
+
+    public void deleteAll() throws SQLException {
+        // 최종 코드. 변경되는 부분인 SQL 문만 전달하고 그 외에는 템플릿이 처리함
+        this.jdbcContext.executeSql("delete from users");
+    }
+
+    public int getCount() throws SQLException  {
+        Connection c = dataSource.getConnection();
+
+        PreparedStatement ps = c.prepareStatement("select count(*) from users");
+
+        ResultSet rs = ps.executeQuery();
+        rs.next();
+        int count = rs.getInt(1);
+
+        rs.close();
+        ps.close();
+        c.close();
+
+        return count;
+    }
+}
+
+
+
+
+
 ```
 
 > - JdbcContext 안에 클라이언트와 템플릿 콜백이 모두 함께 공존하면서 동작하는 구조가 됨 
@@ -318,7 +453,49 @@ br>
 #### 👉 스프링이 제공하는 대표적인 템플릿/콜백 기술 -> JdbcTemplate
 
 ```java
-// 추후에 업데이트
+
+public class UserDao {
+    public void setDataSource(DataSource dataSource) {
+        this.jdbcTemplate = new JdbcTemplate(dataSource);
+    }
+
+    private JdbcTemplate jdbcTemplate;
+
+    private RowMapper<User> userMapper =
+            new RowMapper<User>() {
+                public User mapRow(ResultSet rs, int rowNum) throws SQLException {
+                    User user = new User();
+                    user.setId(rs.getString("id"));
+                    user.setName(rs.getString("name"));
+                    user.setPassword(rs.getString("password"));
+                    return user;
+                }
+            };
+
+
+    public void add(final User user) {
+        this.jdbcTemplate.update("insert into users(id, name, password) values(?,?,?)",
+                user.getId(), user.getName(), user.getPassword());
+    }
+
+    public User get(String id) {
+        return this.jdbcTemplate.queryForObject("select * from users where id = ?",
+                new Object[] {id}, this.userMapper);
+    }
+
+    public void deleteAll() {
+        this.jdbcTemplate.update("delete from users");
+    }
+
+    public int getCount() {
+        return this.jdbcTemplate.queryForInt("select count(*) from users");
+    }
+
+    public List<User> getAll() {
+        return this.jdbcTemplate.query("select * from users order by id",this.userMapper);
+    }
+
+}
 ```
 
 <br>
