@@ -741,7 +741,7 @@ public void add(User user) throws JDOException;
 
 > - <img src="/images/DataAccessException상속계층도.png" width="400" height="400"/>
 > - 스프링에서는 위의 문제를 해결하고자 데이터 액세스 기술을 사용할 때 발생하는 예외들을 모두 추상화해서 DataAccessException 계층 구조 안에 정의함
-> - <img src="/images/UserDao인터페이스와구현의분리.jpeg" width="400" height="400"/>
+> - <img src="/images/UserDao인터페이스와구현의분리.png" width="400" height="400"/>
 > - 이를 통해, DAO를 사용하는 클라이언트는 특정 기술에 종속되지 않도록 만듦
 
 <br>
@@ -836,6 +836,7 @@ public class ExceptionTranslationAspect {
 
 > - 위의 문제를 다시 살펴보면, 중복 키가 발생한 상황에서 각 기술마다 발생되는 DataAccessException이 다름
 > - JDBC는 DuplicatedKeyException이고 Hibernate는 DataIntegrityViolationException임
+>   - 이런 부분을 꼼꼼하게 잘 파악하기 위해선 학습 테스트가 반드시 선행되야함 
 > - 이를 효율적으로 대처하는 방식은 크게 2가지가 있음
 > - (1) 커스텀 예외 변환기 사용
 >   - 각 기술의 예외를 표준화된 방식으로 처리할 수 있는 예외 변환기
