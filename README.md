@@ -835,3 +835,892 @@ public class ExceptionTranslationAspect {
 >   - 각 기술의 예외를 표준화된 방식으로 처리할 수 있는 예외 변환기
 > - (2) 전역 예외 처리기 사용
 >   - AOP나 스프링의 @ControllerAdvice 같은 예외처리 메커니즘을 사용하여 일관된 방식으로 처리 
+
+
+<br>
+<br>
+
+## 📌 05. 스프링의 서비스 추상화 
+
+#### 👉 서비스 추상화란?
+
+> - 성격이 비슷하지만 구체적인 사용법이 상이한 기술을 추상화하고 이를 일관된 방법으로 사용하게끔 만듦
+> - 위와 같이 하는 이유는 OCP, DI 원칙을 지키기 위함
+> - 예를들어서, 특정 서비스 로직이 특정 데이터 액세스 기술에 종속되어 버리면 이는 확장에 매우 불리한 구조임
+> - 이를 해결하고자 스프링에서는 서비스 추상화 기술을 제공함
+>   - PlatformTransactionManager, ...
+
+<br>
+
+#### 👉 사용자 파트 요구사항 추가 및 개발 흐름 설명 
+
+```java
+// (*1) 변경되야 하는 사용자의 이외의 정보는 변경되지 않았음을 직접 확인
+@RunWith(SpringJUnit4ClassRunner.class)
+@ContextConfiguration(locations="/test-applicationContext.xml")
+public class UserDaoTest {
+    
+	@Test
+	public void update() {
+		dao.deleteAll();
+		
+		dao.add(user1);		// 수정할 사용자
+		dao.add(user2);		// 수정하지 않을 사용자
+		
+		user1.setName("오민규");
+		user1.setPassword("springno6");
+		user1.setLevel(Level.GOLD);
+		user1.setLogin(1000);
+		user1.setRecommend(999);
+		
+		dao.update(user1);
+		
+		User user1update = dao.get(user1.getId());
+		checkSameUser(user1, user1update);
+		User user2same = dao.get(user2.getId());
+		checkSameUser(user2, user2same);
+	}
+
+}
+
+
+// 
+
+@RunWith(SpringJUnit4ClassRunner.class)
+@ContextConfiguration(locations="/test-applicationContext.xml")
+public class UserServiceTest {
+    @Autowired UserService userService;
+    @Autowired UserDao userDao;
+    @Autowired DataSource dataSource;
+
+    List<User> users;	// test fixture
+
+    @Before
+    public void setUp() {
+        users = Arrays.asList(
+                new User("bumjin", "박범진", "p1", Level.BASIC, MIN_LOGCOUNT_FOR_SILVER-1, 0),
+                new User("joytouch", "강명성", "p2", Level.BASIC, MIN_LOGCOUNT_FOR_SILVER, 0),
+                new User("erwins", "신승한", "p3", Level.SILVER, 60, MIN_RECCOMEND_FOR_GOLD-1),
+                new User("madnite1", "이상호", "p4", Level.SILVER, 60, MIN_RECCOMEND_FOR_GOLD),
+                new User("green", "오민규", "p5", Level.GOLD, 100, Integer.MAX_VALUE)
+        );
+    }
+
+    @Test
+    public void upgradeLevels() throws Exception {
+        userDao.deleteAll();
+        for(User user : users) userDao.add(user);
+
+        userService.upgradeLevels();
+
+        checkLevelUpgraded(users.get(0), false);
+        checkLevelUpgraded(users.get(1), true);
+        checkLevelUpgraded(users.get(2), false);
+        checkLevelUpgraded(users.get(3), true);
+        checkLevelUpgraded(users.get(4), false);
+    }
+
+    private void checkLevelUpgraded(User user, boolean upgraded) {
+        User userUpdate = userDao.get(user.getId());
+        if (upgraded) {
+            assertThat(userUpdate.getLevel(), is(user.getLevel().nextLevel()));
+        }
+        else {
+            assertThat(userUpdate.getLevel(), is(user.getLevel()));
+        }
+    }
+
+    // (*2) service 테스트 실행. 여기서 눈여겨 봐야할 것은 '한명은 Level에 null 적용하고 나머지 한명은 GOLD를 적용함'
+    @Test
+    public void add() {
+        userDao.deleteAll();
+
+        User userWithLevel = users.get(4);	  // GOLD 레벨  
+        User userWithoutLevel = users.get(0);
+        userWithoutLevel.setLevel(null);
+
+        userService.add(userWithLevel);
+        userService.add(userWithoutLevel);
+
+        User userWithLevelRead = userDao.get(userWithLevel.getId());
+        User userWithoutLevelRead = userDao.get(userWithoutLevel.getId());
+
+        assertThat(userWithLevelRead.getLevel(), is(userWithLevel.getLevel()));
+        assertThat(userWithoutLevelRead.getLevel(), is(Level.BASIC));
+    }
+
+    @Test
+    public void upgradeAllOrNothing() throws Exception {
+        UserService testUserService = new TestUserService(users.get(3).getId());
+        testUserService.setUserDao(this.userDao);
+        testUserService.setDataSource(this.dataSource);
+
+        userDao.deleteAll();
+        for(User user : users) userDao.add(user);
+
+        try {
+            testUserService.upgradeLevels();
+            fail("TestUserServiceException expected");
+        }
+        catch(TestUserServiceException e) {
+        }
+
+        checkLevelUpgraded(users.get(1), false);
+    }
+
+
+    static class TestUserService extends UserService {
+        private String id;
+
+        private TestUserService(String id) {
+            this.id = id;
+        }
+
+        protected void upgradeLevel(User user) {
+            if (user.getId().equals(this.id)) throw new TestUserServiceException();
+            super.upgradeLevel(user);
+        }
+    }
+
+    static class TestUserServiceException extends RuntimeException {
+    }
+
+
+
+}
+
+```
+
+> #### 사용자 파트 요구사항이 추가됨 - 사용자 레벨 요구사항
+>   - 사용자 레벨은 BASIC, SILVER, GOLD로 나뉨
+>   - 로그인 횟수, 추천수를 기반으로 레벨을 업그레이드함
+> 
+> #### update와 같은 쿼리 테스트할 때 주의할 부분 - where 절 없이도 문제 없이 동작함 
+>   - 이런 부분들도 테스트를 통해서 확인해야함
+>   - 즉, update() 태스트는 수정할 로우의 내용이 바뀐 것만 확인하는 경우만 확인하는 것이 아니라 수정되지 말아야 할 로우의 내용이 그대로 남아 있는지 확인해야함
+>   - 위의 문제를 해결하기 위한 2가지 방법 
+>   - (1) update 반환타입이 int이기 때문에 적용된 로우수가 몇 인지 확인하기
+>   - (2) 변경되야 하는 사용자의 이외의 정보는 변경되지 않았음을 직접 확인
+>     - 사용자 2명 등록, 한명은 업데이트 적용 나머지 한명은 업데이트 적용하지 않음 
+
+```java
+@Test
+public void update() {
+    dao.deleteAll();
+		
+    dao.add(user1);		// 수정할 사용자
+    dao.add(user2);		// 수정하지 않을 사용자
+		
+    user1.setName("오민규");
+    user1.setPassword("springno6");
+    user1.setLevel(Level.GOLD);
+    user1.setLogin(1000);
+    user1.setRecommend(999);
+		
+    dao.update(user1);
+		
+    User user1update = dao.get(user1.getId());
+    checkSameUser(user1, user1update);
+    User user2same = dao.get(user2.getId());
+    checkSameUser(user2, user2same);
+}
+```
+
+
+> #### 처음 가입하는 사용자는 기본적으로 Basic 부여
+> - DAO의 add()는 해당 로직'처음 가입하는 사용자는 기본적으로 Basic 부여'을 처리하기엔 적합하지않음
+> - service가 알맞음. 사용자가 등록할때 해당 로직 적용
+> - service 테스트 실행. 여기서 눈여겨 봐야할 것은 '한명은 Level에 null 적용하고 나머지 한명은 GOLD를 적용함'(*2)
+>   - null -> Basic
+>   - GOLD -> GOLD
+
+```java
+@Test
+public void add() {
+    userDao.deleteAll();
+
+    User userWithLevel = users.get(4);	  // GOLD 레벨  
+    User userWithoutLevel = users.get(0);
+    userWithoutLevel.setLevel(null);
+
+    userService.add(userWithLevel);
+    userService.add(userWithoutLevel);
+
+    User userWithLevelRead = userDao.get(userWithLevel.getId());
+    User userWithoutLevelRead = userDao.get(userWithoutLevel.getId());
+
+    assertThat(userWithLevelRead.getLevel(), is(userWithLevel.getLevel()));
+    assertThat(userWithoutLevelRead.getLevel(), is(Level.BASIC));
+}
+
+```
+
+
+> #### 코드 개선 자가 체크리스트
+> - (1) 중복코드가 존재하는지
+> - (2) 코드의 가독성, 명확성은 적당한지 - 이해하기 쉬운 코드인지
+> - (3) 코드의 배치가 알맞은지(적절한 위치에 로직이 놓여있는지)
+> - (4) 변경이 일어난다고 가정했을때, 효율적으로 대처할 수 있는지
+> 
+> #### 해당 코드의 문제점 
+> - if 문이 덕칠되어 있음 - 성격이 다른 여러가지 로직이 한군데에 혼재되어 있음
+>   - 레벨/업그레이드 조건 파악
+>   - 필드 수정
+>   - 수정 플래그 체크 표시
+>   - 변경 수행
+> - upgradeLevel(User user)의 문제점 
+> - 다음 단계가 무엇인가 확인하는 로직과 그때 사용자 오브젝트 level 필드를 변경하는 로직이 혼재되어 있음. 노골적으로 드러나 있고 예외상황 처리가 적절히 되어있지않음 
+> 
+> #### 객체지향 코드 작성하기
+> - 객체지향 코드는 '다른 오브젝트의 데이터를 가져와서 직접 작업을 하는 것이 아닌, 데이터를 갖고 있는 오브젝트에게 작업을 요청하는 것. 즉, 객체 간의 소통과 협력이 중요한 구조임'
+> - 오브젝트에게 데이터를 요구하지 않고 작업을 해달라고 요청하는 것이 가장 기본적인 객체지향 코드
+> - 프로젝트 예시를 들어보면, 의류 카테고리 정보를 담고 있는 오브젝트가 있다고 가정할때 해당 오브젝트에게 적절한 역할이 있어야함(서비스 오브젝트가 임의로 카테고리 오브젝트의 데이터를 조회하고 조작하는 작업을 하면안됨) 
+> - 이런 관점에서 '레벨 순서와 다음 레벨이 무엇인지 결정하는 일은 Level 스스로가 결정하기'
+ 
+```java
+public enum Level {
+	GOLD(3, null), SILVER(2, GOLD), BASIC(1, SILVER);  
+	
+	private final int value;
+	private final Level next; 
+	
+	Level(int value, Level next) {  
+		this.value = value;
+		this.next = next; 
+	}
+	
+	public int intValue() {
+		return value;
+	}
+	
+	public Level nextLevel() { 
+		return this.next;
+	}
+	
+	public static Level valueOf(int value) {
+		switch(value) {
+		case 1: return BASIC;
+		case 2: return SILVER;
+		case 3: return GOLD;
+		default: throw new AssertionError("Unknown value: " + value);
+		}
+	}
+}
+```
+> - User 내부 정보가 변경되는 것은 UserService 보다는 User 오브젝트 스스로가 다루는 게 적절함
+>   - User는 사용자 정보를 담고 있는 단순한 오브젝트이지만 특정 역할을 수행할 수 있음
+>     - UserService가 일일이 User 정보를 업그레이드 시키는 것 보다 User에게 레벨 업그레이드를 해달라고 요청
+>     - User 오브젝트는 여러 오브젝트와 협력하므로 스스로 예외 상황에 대해 검증 기능을 갖고 있는 것이 적합함 
+
+```java
+
+public class User {
+    String id;
+    String name;
+    String password;
+    Level level;
+    int login;
+    int recommend;
+
+    public User() {
+    }
+
+    public User(String id, String name, String password, Level level,
+            int login, int recommend) {
+        this.id = id;
+        this.name = name;
+        this.password = password;
+        this.level = level;
+        this.login = login;
+        this.recommend = recommend;
+    }
+
+
+    public String getId() {
+        return id;
+    }
+    public void setId(String id) {
+        this.id = id;
+    }
+    public String getName() {
+        return name;
+    }
+    public void setName(String name) {
+        this.name = name;
+    }
+    public String getPassword() {
+        return password;
+    }
+    public void setPassword(String password) {
+        this.password = password;
+    }
+
+    public Level getLevel() {
+        return level;
+    }
+
+    public void setLevel(Level level) {
+        this.level = level;
+    }
+
+    public int getLogin() {
+        return login;
+    }
+
+    public void setLogin(int login) {
+        this.login = login;
+    }
+
+    public int getRecommend() {
+        return recommend;
+    }
+
+    public void setRecommend(int recommend) {
+        this.recommend = recommend;
+    }
+
+    public void upgradeLevel() {
+        Level nextLevel = this.level.nextLevel();
+        if (nextLevel == null) {
+            throw new IllegalStateException(this.level + "은  업그레이드가 불가능합니다");
+        }
+        else {
+            this.level = nextLevel;
+        }
+    }
+}
+
+```
+
+> #### 특정 정책을 처리하는 오브젝트를 인터페이스로 정의
+> - 현재 회원 업그레이드 정책을 인터페이스로 정의함
+> - 마찬가지로, 쿠폰 발행 정책, ... 여러 도메인에서 발생되는 정책을 인터페이스로 정의해서 관리하는 것은 매우 좋은 생각
+
+```java
+public interface UserLevelUpgradePolicy {
+    boolean canUpgradeLevel(User user);
+    void upgradeLevel(User user);
+}
+```
+
+> #### 정기 사용자 레벨 관리 작업을 수행하는 도중에 네트워크 연결 문제로 해당 작업을 완료하지 못함 - 모든 회원을 초기 상태 레벨로 복구함
+> - 이런 상황을 대처하기 위해 '트랜잭션'을 적용함
+> - 예외적인 상황을 작업 중간에 강제로 발생시키는 테스트 코드를 작성해야함
+>   - 테스트 대역(UserService) 사용해서 해당 테스트 코드 작성
+>   - 테스트의 목적에 맞게 동작하도록 클래스를 만듦
+>     - 테스트 대역은 테스트 클래스 내부에 스태틱 클래스로 만드는 것이 좋음
+> - 위의 내용 토대로 테스트를 작성하고 시도하면 실패함 -> 트랜잭션 적용이 제대로 적용안됨
+
+```java
+@RunWith(SpringJUnit4ClassRunner.class)
+@ContextConfiguration(locations="/test-applicationContext.xml")
+public class UserServiceTest {
+	@Autowired UserService userService;	
+	@Autowired UserDao userDao;
+	@Autowired DataSource dataSource;
+	
+	List<User> users;	// test fixture
+	
+	@Before
+	public void setUp() {
+		users = Arrays.asList(
+				new User("bumjin", "박범진", "p1", Level.BASIC, MIN_LOGCOUNT_FOR_SILVER-1, 0),
+				new User("joytouch", "강명성", "p2", Level.BASIC, MIN_LOGCOUNT_FOR_SILVER, 0),
+				new User("erwins", "신승한", "p3", Level.SILVER, 60, MIN_RECCOMEND_FOR_GOLD-1),
+				new User("madnite1", "이상호", "p4", Level.SILVER, 60, MIN_RECCOMEND_FOR_GOLD),
+				new User("green", "오민규", "p5", Level.GOLD, 100, Integer.MAX_VALUE)
+				);
+	}
+
+	@Test
+	public void upgradeLevels() throws Exception {
+		userDao.deleteAll();
+		for(User user : users) userDao.add(user);
+		
+		userService.upgradeLevels();
+		
+		checkLevelUpgraded(users.get(0), false);
+		checkLevelUpgraded(users.get(1), true);
+		checkLevelUpgraded(users.get(2), false);
+		checkLevelUpgraded(users.get(3), true);
+		checkLevelUpgraded(users.get(4), false);
+	}
+
+	private void checkLevelUpgraded(User user, boolean upgraded) {
+		User userUpdate = userDao.get(user.getId());
+		if (upgraded) {
+			assertThat(userUpdate.getLevel(), is(user.getLevel().nextLevel()));
+		}
+		else {
+			assertThat(userUpdate.getLevel(), is(user.getLevel()));
+		}
+	}
+
+	@Test 
+	public void add() {
+		userDao.deleteAll();
+		
+		User userWithLevel = users.get(4);	  // GOLD 레벨  
+		User userWithoutLevel = users.get(0);  
+		userWithoutLevel.setLevel(null);
+		
+		userService.add(userWithLevel);	  
+		userService.add(userWithoutLevel);
+		
+		User userWithLevelRead = userDao.get(userWithLevel.getId());
+		User userWithoutLevelRead = userDao.get(userWithoutLevel.getId());
+		
+		assertThat(userWithLevelRead.getLevel(), is(userWithLevel.getLevel())); 
+		assertThat(userWithoutLevelRead.getLevel(), is(Level.BASIC));
+	}
+ 
+	@Test
+	public void upgradeAllOrNothing() throws Exception {
+		UserService testUserService = new TestUserService(users.get(3).getId());  
+		testUserService.setUserDao(this.userDao); 
+		testUserService.setDataSource(this.dataSource);
+		 
+		userDao.deleteAll();			  
+		for(User user : users) userDao.add(user);
+		
+		try {
+			testUserService.upgradeLevels();   
+			fail("TestUserServiceException expected"); 
+		}
+		catch(TestUserServiceException e) { 
+		}
+		
+		checkLevelUpgraded(users.get(1), false);
+	}
+
+	
+    // 테스트 대역 - 강제로 예외를 발생시키는 UserService
+	static class TestUserService extends UserService {
+		private String id;
+		
+		private TestUserService(String id) {  
+			this.id = id;
+		}
+
+		protected void upgradeLevel(User user) {
+			if (user.getId().equals(this.id)) throw new TestUserServiceException();  
+			super.upgradeLevel(user);  
+		}
+	}
+	
+    // 테스트용 예외 정의 
+	static class TestUserServiceException extends RuntimeException {
+	}
+
+
+
+}
+
+```
+
+> #### 트랜잭션
+> - upgradeLevels()가 하나의 트랜잭션 안에서 동작하지 않았기 때문에 위의 테스트는 실패함
+>   - 트랜잭션 : 여러 작업을 하나로 묶음, 더 이상 나눌 수 없는 논리적인 작업 단위
+>   - 작업 중간에 예외가 발생하여 작업을 완료하지 못할경우 해당 데이터를 작업 시행 이전으로 되돌림(롤백)
+> 
+> #### 트랜잭션 경계설정
+> - DB는 그 자체로 완벽한 트랜잭션을 지원함
+>   - 트랜잭션에는 커밋/롤백이 있음
+>   - 커밋 : 트랜잭션의 작업을 확정하고 DB에 반영
+>   - 롤백 : 트랜잭션의 작업을 취소하고 DB를 이전 상태로 되돌림
+> - 트랜잭션은 시작지점과 끝지점이 있음. 애플리케이션 내에서 트랜잭셔이 시작되고 끝나는 지점까지를 트랜잭션 경계라고함
+> - 트랜잭션 경계는 하나의 Connection이 만들어지고 닫히는 범위 안에 존재함
+>   - 하나의 DB 커넥션 내에 만들어지는 트랜잭션을 로컬 트랜잭션이라고함 
+> - upgradeLevels() 와 같이 DB에 여러번 업데이트를 하는 작업은 하나의 트랜잭션으로 구성해야함. 하나의 트랜잭션으로 묶기 위해선 DB 커넥션을 하나만 사용해야함
+> - <img src="/images/트랜잭션처리.jpeg" width="400" height="400"/>
+> 
+> #### 비즈니스 로직 내의 트랜잭션 경계 설정
+> - 트랜잭션 경계 설정은 서비스에서 처리함
+> - 하지만, 직접 트랜잭션 경계 설정을 할 경우 밑에와 같은 문제들이 발생함
+> - (1) 비즈니스 로직과 커넥션 리소스 처리 로직이 혼재됨
+> - (2) DAO 메소드와 비즈니스 로직을 담아두는 UserService의 메서드에 일일이 Connection 파라미터를 추가해야함 
+> - (3) Connection 파라미터가 UserDao 인터페이스의 메서드에 추가되면, 더 이상 해당 인터페이스는 데이타 액세스 기술로부터 자유롭지 못함
+> - (4) 위의 변경사항으로 테스트 코드에도 영향을 미침
+
+```java
+
+// 트랜잭션 경계설정 구조 적용 
+public void upgradeLevels() throws Exception {
+    // (1) DB Connection 생성
+    // (2) Transaction 시작
+    
+    try {
+        // (3) DAO 메서드 호출 
+        // (4) Transaction 커밋
+    } catch (Exception e) {
+        // (5) Transaction 롤백
+        throw e;
+    } finally {
+        // (6) DB Connection 종료
+    }
+}
+
+// 인터페이스에 Connection 파라미터 추가
+public interface UserDao {
+   public void add(Cennection c, User user);
+   public User get(Connection c, String id);
+   public void update(Connection c, User user);
+}
+
+
+// Connection을 공유하도록 수정한 UserService
+class UserService {
+    public void upgradeLevels() throws Exception {
+        Connection c = ...;
+        
+        try {
+            ...
+            upgradeLevel(c, user); // Connection 전달함 
+        } 
+        ... 
+    }
+    
+    // Connection 파라미터 추가됨 
+    protected void upgradeLevel(Connection c, User user) {
+        user.upgradeLevel();
+        userDao.update(c, user);
+    }
+}
+```
+
+> #### 스프링의 트랜잭션 동기화 처리 지원 - TransactionSynchronizationManager
+> - 트랜잭션 동기화
+> - 트랜잭션 동기화는 트랜잭션을 시작하기 위해 만든 Connection 오브젝트를 특별한 저장소에 보관해두고 이후에 호출되면 Dao의 메서드에 저장된 Connection을 가져다가 사용하게함
+> - 트랜잭션 동기화 저장소는 작업 스레드마다 독립적으로 Connection 오브젝트를 지정하고 관리하기 때문에 멀티 쓰레드 환경에서도 안점함
+> - <img src="/images/트랜잭션동기화처리.jpeg" width="400" height="400"/>
+> - 스프링에서 해당 작업을 지원하기 위해 TransactionSynchronizationManager 인터페이스 지원
+> - 트랜잭션 동기화 작업을 초기화하도록 요청함
+> - DataSourceUtils에서 제공하는 getConnection()을 통해서 DB Connection을 생성함
+> - 해당 메서드는 Connection 오브젝트를 생성해주며 트랜잭션 동기화에 사용하도록 저장소에 바인딩함 
+
+
+<br>
+
+#### 👉 트랜잭션 서비스 추상화 
+> - 글로벌 트랜잭션은 별도의 트랜잭션 관리자를 통해 트랜잭션을 관리하는 방식
+> - 글로벌 트랜잭션을 적용해야 트랜잭션 매니저를 통해 여러 개의 DB가 참여하는 작업을 하나의 트랜잭션으로 만들 수 있음(JTA를 통해 글로벌 트랜잭션 관리)
+> - <img src="/images/JTA작동원리.png" width="400" height="400">
+> - 하지만, 하이버네이트로 이용한 트랜잭션 관리 코드는 JDBC나 JTA의 코드와 다름
+>   - 트랜잭션의 경계설정을 해야할 필요가 생기면 다시 특정 데이타 액세스 기술에 종속되어버림 
+>   - 여러 기술 사용법의 공통점이 있다면 이를 '추상화' 하는 것은 좋은 접근 방법
+>   - 추상화란 하위 시스템의 공통적인 부분을 뽑아내서 분리하여 일관되게 사용하도록 만드는 것 
+> - 스프링은 트랜잭션 기술의 공통점을 담은 트랜잭션 추상화 기술을 제공함 
+> - <img src="/images/트랜잭션추상화계층.png" width="400" height="400"/>
+
+
+<br>
+
+#### 👉 트랜잭션 기술 설정의 분리
+
+> - 각 기술마다 PlatformTransactionManager 구현체가 다름
+>   - JDBC -> DataSourceTxManager
+>   - JTA -> JtaxManager
+>   - Hibernate -> HibernateTxManager
+> - 어떤 트랜잭션 매니저 구현체를 사용할지는 스프링 DI 방식으로 처리되야함
+>   - UserService가 자신이 사용하는 구현체를 알고있는 것은 DI 원칙 위배
+
+
+```java
+
+public class UserService {
+	public static final int MIN_LOGCOUNT_FOR_SILVER = 50;
+	public static final int MIN_RECCOMEND_FOR_GOLD = 30;
+
+	private UserDao userDao;
+	private PlatformTransactionManager transactionManager;
+
+	public void setUserDao(UserDao userDao) {
+		this.userDao = userDao;
+	}
+    
+	public void setTransactionManager(PlatformTransactionManager transactionManager) {
+		this.transactionManager = transactionManager;
+	}
+
+	public void upgradeLevels() {
+		TransactionStatus status = 
+			this.transactionManager.getTransaction(new DefaultTransactionDefinition());
+		try {
+			List<User> users = userDao.getAll();
+			for (User user : users) {
+				if (canUpgradeLevel(user)) {
+					upgradeLevel(user);
+				}
+			}
+			this.transactionManager.commit(status);
+		} catch (RuntimeException e) {
+			this.transactionManager.rollback(status);
+			throw e;
+		}
+	}
+	
+	private boolean canUpgradeLevel(User user) {
+		Level currentLevel = user.getLevel(); 
+		switch(currentLevel) {                                   
+		case BASIC: return (user.getLogin() >= MIN_LOGCOUNT_FOR_SILVER); 
+		case SILVER: return (user.getRecommend() >= MIN_RECCOMEND_FOR_GOLD);
+		case GOLD: return false;
+		default: throw new IllegalArgumentException("Unknown Level: " + currentLevel); 
+		}
+	}
+
+	protected void upgradeLevel(User user) {
+		user.upgradeLevel();
+		userDao.update(user);
+		sendUpgradeEMail(user);
+	}
+    
+	
+	public void add(User user) {
+		if (user.getLevel() == null) user.setLevel(Level.BASIC);
+		userDao.add(user);
+	}
+}
+
+```
+
+<br>
+
+#### 👉 서비스 추상화와 단일 책임 원칙(SRP)
+
+> - <img src="/images/계층과책임의분리.png" width="400" height="400"/>
+> - UserDao와 UserService는 인터페이스와 DI를 통해 연결됨으로써 결합도가 낮아짐. 결합도가 낮다는 것은 데이터 액세스 로직이 바뀌거나, 심지어 데이터 액세스 기술이 바뀐다고 할지라도 UserService의 코드에는 영향을 미치지 않음. 즉, 서로 독립적으로 확장될 수 있음
+> - 애플리케이션 로직의 종류에 따른 수평적인 구분이든, 로직과 기술이라는 수직적인 구분이든 모두 결합도가 낮으며, 서로 영향을 주지 않고 자유롭게 확장될 수 있는 구조를 만들 수 있는데는 스프링의 DI가 중요한 역할을 하고 있음
+> - DI의 가치는 이렇게 관심, 책임, 성격이 다른 코드를 깔끔하게 분리하는 데 있음
+
+<br>
+
+#### 👉 단일 책임 원칙(SRP)
+
+> - 단일 책임 원칙(SRP) : 하나의 모듈은 한 가지 책임을 가져야함. 하나의 모듈이 바뀌는 이유는 한 가지여야함을 보장
+>   - 변경이 발생했을 때 변경 대상이 명확해짐
+>   - 기술적인 수정사항에도 마찬가지로 적용되는 효과 
+> - 책임과 관심이 다른 코드를 분리하고 서로 영향을 주지 않도록 다양한 추상화 기법을 도입하고, 애플리케이션 로직과 기술/환경을 분리하는 등의 작업은 갈수록 복잡해지는 엔터프라이즈 애플리케이션에서는 반드시 필요함. 이를 스프링에서는 DI를 통해 지원함
+> - 단일 책임 원칙을 잘 지키는 코드를 만들려면 인터페이스를 도입하고 이를 DI로 연결해야함. 그 결과로 단일 책임 뿐만아니라 개방 폐쇄 원칙도 충족함
+> - 또한, 모듈 간에 결합도가 낮아서 서로의 변경이 영향을 주지 않고 같은 이유로 변경이 단일 책임에 집중되는 응집도 높은 코드를 작성할 수 있음 
+
+
+<br>
+
+#### 👉 메일 서비스 추상화 
+
+> - 추가 요구 사항 정의 : '레벨이 업그레이드되는 사용자에게는 안내 메일을 발송함'
+> - 자바에서는 메일 발송할 때 JavaMail을 사용함. 밑에는 전형적인 자바로 메일 보내는 코드 
+
+```java
+
+private void sendUpgradeEMail(User user) {
+    Prorperties props = new Properties();
+    props.put("mail.smtp.host", "mail.ksug.org");
+    Session s = Session.getInstance(props, null);
+    
+    MimeMessage message = new MimeMessage(s);
+    try {
+        message.setFrom(new InternetAddress("useradmin@ksug.org"));
+        message.addRecipient(Message.RecipientType.TO, new InternetAddress(user.getEmail()));
+        message.setSubject("Upgrade 안내");
+        message.setText("사용자님의 등급이 " + user.getLevel().name() + "로 업그레이드되었습니다");
+        
+        Transport.send(message);
+    } catch (AddressException e) {
+        throw new RuntimeException(e);
+    } catch (MessagingException e) {
+        throw new RuntimeException(e);
+    } catch (UnsupportedEncodingException e) {
+        throw new RuntimeException(e);
+    }
+}
+```
+
+<br>
+
+#### 👉 JavaMail이 포함된 코드의 테스트
+
+> - JavaMail을 사용한 코드는 테스트하기 어려움
+> - 테스트를 실행했는데 만약 메일 서버가 준비되어 있지 않았다면 예외가 발생하면서 테스트가 실패함
+> - 그렇다고해서 테스트를 하면서 매번 메일 서버를 연결하여 메일이 발송되는 것은 바람직한 방법이아님
+> - 그래서, 실제 DB 대신에 테스트 DB를 사용하듯이 테스트 때는 메일 서버 설정을 다르게 해서 테스트용 메일 서버를 이용하는 것이 좋음
+
+
+<br>
+
+#### 👉 JavaMail은 테스트 하기 어려운 대표젹인 API
+
+> - JavaMail은 테스트하기 어려운 대표적인 API임. JavaMail의 핵심 API에는 DataSource 처럼 인터페이스로 만들어져서 구현을 바꿀 수 없기 때문임
+> - 그렇기에 인터페이스를 통해 테스트 대역을 만들어서 테스트를 진행하는 방식을 적용할 수 없음
+
+<br>
+
+#### 👉 스프링의 메일 서비스 추상화 -> MailSender
+
+> - 스프링은 위와 같은 문제를 해결하고자 MailSender라는 인터페이스를 제공함
+> - 이를 통해 테스트 대역인 DummyMailSender를 만들어서 테스트를 진행할 수 있음
+> - <img src="/images/유저메일기능테스트구성.jpeg" width="400" height="400"/>
+
+
+<br>
+
+#### 👉 테스트 대역의 종류와 특징
+
+> - 테스트 대역
+>   - 테스트 환경을 만들어 구성하기 위해, 테스트 대상이되는 오브젝트의 기능에만 충실하게 수행하면서 빠르고 여러번 테스트를 실행할 수 있도록 사용하는 오브젝트
+> - 테스트 스텁
+>   - 테스트 대상의 의존 오브젝트로서 존재하면서 테스트 수행 중에 코드가 정상 수행할 수 있도록 돕는 것 
+> - 목 오브젝트
+>   - 테스트 대상 오브젝트와 의존 오브젝트 사이에 일어나는 일을 검증할 수 있도록 특별히 설계된 오브젝트
+>   - 목 오브젝트는 스텁처럼 테스트 오브젝트가 정상적으로 실행되도록 도와주면서 테스트 오브젝트와 자신의 사이에서 일어나는 커뮤니케이션 내용을 저장해뒀다가 테스트 결과를 검증하는데 활용할 수 있게 해줌
+
+```java
+// 테스트 대역 정의 
+public class DummyMailSender implements MailSender {
+    public void send(SimpleMailMessage mailMessage) throws MailException {
+    }
+
+    public void send(SimpleMailMessage[] mailMessage) throws MailException {
+    }
+}
+
+
+
+
+@RunWith(SpringJUnit4ClassRunner.class)
+@ContextConfiguration(locations="/test-applicationContext.xml")
+public class UserServiceTest {
+	@Autowired UserService userService;	
+	@Autowired UserDao userDao;
+	@Autowired MailSender mailSender; 
+	@Autowired PlatformTransactionManager transactionManager;
+	
+	List<User> users;	// 테스트 픽스쳐 
+	
+	@Before
+	public void setUp() {
+		users = Arrays.asList(
+				new User("bumjin", "박범진", "p1", "user1@ksug.org", Level.BASIC, MIN_LOGCOUNT_FOR_SILVER-1, 0),
+				new User("joytouch", "강명성", "p2", "user2@ksug.org", Level.BASIC, MIN_LOGCOUNT_FOR_SILVER, 0),
+				new User("erwins", "신승한", "p3", "user3@ksug.org", Level.SILVER, 60, MIN_RECCOMEND_FOR_GOLD-1),
+				new User("madnite1", "이상호", "p4", "user4@ksug.org", Level.SILVER, 60, MIN_RECCOMEND_FOR_GOLD),
+				new User("green", "오민규", "p5", "user5@ksug.org", Level.GOLD, 100, Integer.MAX_VALUE)
+				);
+	}
+
+	@Test 
+    @DirtiesContext // 테스트 컨텍스트가 변경되는 것을 알림
+	public void upgradeLevels() {
+		userDao.deleteAll();
+		for(User user : users) userDao.add(user);
+		
+		MockMailSender mockMailSender = new MockMailSender();  
+		userService.setMailSender(mockMailSender);  
+		
+		userService.upgradeLevels();
+		
+		checkLevelUpgraded(users.get(0), false);
+		checkLevelUpgraded(users.get(1), true);
+		checkLevelUpgraded(users.get(2), false);
+		checkLevelUpgraded(users.get(3), true);
+		checkLevelUpgraded(users.get(4), false);
+		
+		List<String> request = mockMailSender.getRequests();  
+		assertThat(request.size(), is(2));  
+		assertThat(request.get(0), is(users.get(1).getEmail()));  
+		assertThat(request.get(1), is(users.get(3).getEmail()));  
+	}
+	
+    // 목 오브젝트 정의 
+	static class MockMailSender implements MailSender {
+        // 커뮤니케이션 내용을 저장해둠 
+		private List<String> requests = new ArrayList<String>();	
+		
+		public List<String> getRequests() {
+			return requests;
+		}
+
+		public void send(SimpleMailMessage mailMessage) throws MailException {
+			requests.add(mailMessage.getTo()[0]);  
+		}
+
+		public void send(SimpleMailMessage[] mailMessage) throws MailException {
+		}
+	}
+
+
+	private void checkLevelUpgraded(User user, boolean upgraded) {
+		User userUpdate = userDao.get(user.getId());
+		if (upgraded) {
+			assertThat(userUpdate.getLevel(), is(user.getLevel().nextLevel()));
+		}
+		else {
+			assertThat(userUpdate.getLevel(), is(user.getLevel()));
+		}
+	}
+
+	@Test 
+	public void add() {
+		userDao.deleteAll();
+		
+		User userWithLevel = users.get(4);	  // GOLD 레벨  
+		User userWithoutLevel = users.get(0);  
+		userWithoutLevel.setLevel(null);
+		
+		userService.add(userWithLevel);	  
+		userService.add(userWithoutLevel);
+		
+		User userWithLevelRead = userDao.get(userWithLevel.getId());
+		User userWithoutLevelRead = userDao.get(userWithoutLevel.getId());
+		
+		assertThat(userWithLevelRead.getLevel(), is(userWithLevel.getLevel())); 
+		assertThat(userWithoutLevelRead.getLevel(), is(Level.BASIC));
+	}
+ 
+	@Test
+	public void upgradeAllOrNothing() {
+		UserService testUserService = new TestUserService(users.get(3).getId());  
+		testUserService.setUserDao(this.userDao);
+		testUserService.setTransactionManager(this.transactionManager);
+		testUserService.setMailSender(this.mailSender);
+		 
+		userDao.deleteAll();			  
+		for(User user : users) userDao.add(user);
+		
+		try {
+			testUserService.upgradeLevels();   
+			fail("TestUserServiceException expected"); 
+		}
+		catch(TestUserServiceException e) { 
+		}
+		
+		checkLevelUpgraded(users.get(1), false);
+	}
+
+	
+	static class TestUserService extends UserService {
+		private String id;
+		
+		private TestUserService(String id) {  
+			this.id = id;
+		}
+
+		protected void upgradeLevel(User user) {
+			if (user.getId().equals(this.id)) throw new TestUserServiceException();  
+			super.upgradeLevel(user);  
+		}
+	}
+	
+	static class TestUserServiceException extends RuntimeException {
+	}
+
+
+
+}
+```
+
+
+
+
+
