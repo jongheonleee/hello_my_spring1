@@ -884,8 +884,6 @@ public class UserDaoTest {
 }
 
 
-// 
-
 @RunWith(SpringJUnit4ClassRunner.class)
 @ContextConfiguration(locations="/test-applicationContext.xml")
 public class UserServiceTest {
@@ -1721,7 +1719,211 @@ public class UserServiceTest {
 }
 ```
 
+## 📌 06. AOP
+
+#### 🧑🏻‍🏫 주요 내용 작성
+
+<img src="" width="800" height="500"/>
+
+#### 👉 AOP에 대한 간단한 소개
+> - 스프링의 3대 기반 기술은 IoC/DI, 서비스 추상화, AOP임
+> - AOP는 Aspect Oriented Programming의 약자로, 관점 지향 프로그래밍이라고 함
+> - AOP는 OOP의 한계를 극복하기 위해 나온 개념으로, OOP는 객체의 기능을 중심으로 모듈화를 하지만, AOP는 횡단 관심사를 중심으로 모듈화함
+
+
+<br>
+
+#### 👉 AOP로 트랜잭션 코드 분리
+> - 트랜잭션 경계설정 기능을 AOP를 통해 해결하고자함
+> - 앞서 서비스 추상화를 통해 트랜잭션, 메일 발송 기술 등에 종속적인지 않은 비즈니스 로직을 만듦
+> - 하지만, 트랜잭션 경계설정을 위해 비즈니스 로직에는 트랜잭션 경계설정 코드가 들어가 있음
+> - 즉, 문제는 'UserService 코드를 보면, 비즈니스 로직 코드를 사이에 두고 트랜잭션 시작과 종료를 담당하는 코드가 앞뒤에 위치하고 있음'
+> - 밑에 코드는 서로 다른 성격의 코드가 혼재되어 있음 - 트랜잭션 경계설정, 비즈니스 로직 
+> - 이 두가지 코드는 성격이 다를 뿐 아니라 서로 주고 받는 것도 없는 독립적인 코드 
+>   - 트랜잭션 경계설정 코드를 클래스 밖으로 분리해야함 
+
+```java
+
+public class UserService {
+    public void upgradeLevels() {
+        // (1) 트랜잭션 경계설정 코드 <- 외부로 분리해낼 코드 
+        TransactionStatus status = 
+            this.transactionManager.getTransaction(new DefaultTransactionDefinition());
+        
+        try {
+            
+            // (2) 비즈니스 로직 
+            List<User> users = userDao.getAll();
+            for (User user : users) {
+                if (canUpgradeLevel(user)) {
+                    upgradeLevel(user);
+                }
+            }
+            
+            // (1) 트랜잭션 경계설정 코드 - 커밋 <- 외부로 분리해낼 코드 
+            this.transactionManager.commit(status);
+        } catch (RuntimeException e) {
+            // (1) 트랜잭션 경계설정 코드 - 롤백 <- 외부로 분리해낼 코드 
+            this.transactionManager.rollback(status);
+            throw e;
+        }
+    }
+}
+
+```
+
+<br>
+
+#### 👉 DI 적용을 이용한 트랜잭션 분리
+
+> - DI는 실제 사용할 오브젝트의 클래스 정체를 감춘채 인터페이스를 통해 간접적으로 접근하는 것이 핵심 아이디어임
+> - 우리가 하고자 하는 것은 'UserService에는 순수하게 비즈니스 로직을 담고 있는 코드만 놔두고 트랜잭션 경계설정을 담당하는 코드를 외부로 분리하는 것'
+> - 이에 적합한 디자인 패턴이 있음. 바로 '데코레이터 패턴임'
+
+<br>
+
+#### 👉 분리된 트랜잭션 기능
+
+```java
+// 인터페이스 정의
+public interface UserService {
+	void add(User user);
+	void upgradeLevels();
+}
+
+// UserServiceImpl 클래스, 비즈니스 로직을 담당하는 클래스 - 알맹이 
+public class UserServiceImpl implements UserService {
+    public static final int MIN_LOGCOUNT_FOR_SILVER = 50;
+    public static final int MIN_RECCOMEND_FOR_GOLD = 30;
+
+    private UserDao userDao;
+    private MailSender mailSender;
+
+    public void setUserDao(UserDao userDao) {
+        this.userDao = userDao;
+    }
+
+    public void setMailSender(MailSender mailSender) {
+        this.mailSender = mailSender;
+    }
+
+    public void upgradeLevels() {
+        List<User> users = userDao.getAll();
+        for (User user : users) {
+            if (canUpgradeLevel(user)) {
+                upgradeLevel(user);
+            }
+        }
+    }
+
+    private boolean canUpgradeLevel(User user) {
+        Level currentLevel = user.getLevel();
+        switch(currentLevel) {
+            case BASIC: return (user.getLogin() >= MIN_LOGCOUNT_FOR_SILVER);
+            case SILVER: return (user.getRecommend() >= MIN_RECCOMEND_FOR_GOLD);
+            case GOLD: return false;
+            default: throw new IllegalArgumentException("Unknown Level: " + currentLevel);
+        }
+    }
+
+    protected void upgradeLevel(User user) {
+        user.upgradeLevel();
+        userDao.update(user);
+        sendUpgradeEMail(user);
+    }
+
+    private void sendUpgradeEMail(User user) {
+        SimpleMailMessage mailMessage = new SimpleMailMessage();
+        mailMessage.setTo(user.getEmail());
+        mailMessage.setFrom("useradmin@ksug.org");
+        mailMessage.setSubject("Upgrade ¾È³»");
+        mailMessage.setText("»ç¿ëÀÚ´ÔÀÇ µî±ÞÀÌ " + user.getLevel().name());
+
+        this.mailSender.send(mailMessage);
+    }
+
+    public void add(User user) {
+        if (user.getLevel() == null) user.setLevel(Level.BASIC);
+        userDao.add(user);
+    }
+}
+
+// 데코레이터 패턴을 적용한 트랜잭션 기능을 담당하는 UserServiceTx 클래스 - 껍데기 
+public class UserServiceTx implements UserService {
+    UserService userService;
+    PlatformTransactionManager transactionManager;
+
+    public void setTransactionManager(
+            PlatformTransactionManager transactionManager) {
+        this.transactionManager = transactionManager;
+    }
+
+    public void setUserService(UserService userService) {
+        this.userService = userService;
+    }
+
+    public void add(User user) {
+        this.userService.add(user);
+    }
+
+    public void upgradeLevels() {
+        TransactionStatus status = this.transactionManager
+                .getTransaction(new DefaultTransactionDefinition());
+        try {
+            userService.upgradeLevels();
+            this.transactionManager.commit(status);
+        } catch (RuntimeException e) {
+            this.transactionManager.rollback(status);
+            throw e;
+        }
+    }
+}
 
 
 
+```
 
+> - 순수 비즈니스 로직을 처리하는 UserServiceImpl과 트랜잭션 처리를 담은 UserServiceTx 클래스를 만듦. 이를 데코레이터 패턴으로 구성함
+> - <img src="/images/데코레이터패턴.jpeg" height="400" width="400">
+> - 위의 구조를 DI를 적용하여 런타임 시점에 밑에와 같이 구성함 
+> - <img src="/images/런타임오브젝트의존관계(AOP).jpeg" height="400" width="400">
+
+
+<br>
+
+#### 👉 고립된 단위 테스트
+
+> - 단위 테스트는 '가능한 한 작은 단위로 쪼개서 테스트 하는 것'이 중요함
+>   - (1) 실패 원인을 쉽고 빠르게 파악할 수 있음
+>   - (2) 테스트의 의도, 내용이 분명해지고 만들기 쉬움
+> - 현재 UserService는 UserDao, DsTransactionManager, JavaMailSenderImpl에 의존하고 있음. 총 3가지 의존 오브젝트가 존재함
+> - 위의 의존 오브젝트로부터 자유롭게 구성시켜(독립시켜) 해당 테스트 대상인 UserService에 대해서만(비즈니스 로직에 대해서만) 테스트 할 수 있게 구성해야함
+
+<br>
+
+#### 👉 테스트 대상 오브젝트 고립시키기
+
+> - <img src="/images/고립시킨UserServiceImpl테스트구조.jpeg" height="400" width="400">
+> - 테스트 대상이 환경이나, 외부 서버, 다른 클래스의 코드에 종속되고 영향을 받지 않도록 고립시켜야함
+>   - 테스트를 위한 대역(스텁)
+>   - 목 오브젝트
+
+<br>
+
+#### 👉 단위 테스트와 통합 테스트
+
+> - 단위 테스트는 절대적인 기준은 없음. 다만, 하나의 단위에 초점을 맞춘 테스트를 의미함
+> - 통합 테스트는 두 개 이상의 성격이나 계층이 다른 오브젝트가 연동하도록 만들어 테스트 하거나 외부의 DB나 파일 서비스 등의 리소스가 참여하는 테스트를 의미함
+
+<br>
+
+#### 👉 목 프레임워크
+
+
+> - 단위 테스트 작성시 스텁이나 목 오브젝트의 사용이 필수적임
+> - Mockito 프레임워크, 해당 프레임워크를 사용하면 간단한 메서드 호출만으로 다이나믹하게 특정 인터페이스를 구현한 테스트용 오브젝트를 만들 수 있음
+> - Mocktio 목 오브젝트 사용 과정
+>   - (1) 인터페이스를 통해 목 오브젝트 생성
+>   - (2) 예외나 리턴 값이 있으면 지정해줌
+>   - (3) 테스트 대상 오브젝트에 DI해서 테스트 중에 목 오브젝트를 사용하도록 만듦
+>   - (4) 테스트 대상 오브젝트를 사용한 후, 목 오브젝트의 특정 메서드가 호출됐는지, 어떤 값을 가지고 몇 번 호출했는지 검증함
