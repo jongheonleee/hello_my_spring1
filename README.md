@@ -2325,7 +2325,7 @@ public class NameMatchClassMethodPointcut extends NameMatchMethodPointcut {
 
 #### 👉 어드바이스와 포인트 컷의 재사용
 
-> - <img src="/images/ProxyFactoryBean과Advide그리고Pointcut을적용한구조" width="400" height="400">
+> - <img src="/images/ProxyFactoryBean과Advide그리고Pointcut을적용한구조.jpeg" width="400" height="400">
 > - ProxyFactoryBean은 스프링이 DI와 템플릿/콜백 패턴, 서비스 추상화 등의 모든 기법이 적용됨
 > - 이로써 독립적이며 여러 프록시가 공유할 수 있는 어드바이스와 포인트 컷으로 확장 기능을 분리할 수 있음 
 
