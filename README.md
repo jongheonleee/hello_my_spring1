@@ -3073,6 +3073,10 @@ public class DefaultAdvisorAutoProxyCreator extends AbstractAdvisorAutoProxyCrea
 
 #### 👉 AOP란 무엇인가?
 
+> - AOP란
+>   - 애플리케이션에 산재ㄷ해서 나타나는 부가기능을 모듈화할 수 있는 기술을 말함
+>   - OOP만으로는 모듈화하기 힘든 부가기능을 효과적으로 모듈화하도록 도와주는 보조 기술 
+>   
 > - 앞의 과정을 총 정리하면서 AOP 개념 설명
 > - (1) 트랜잭션 서비스 추상화
 >   - 트랜잭션 경계 설정 코드와 비즈니스 로직이 혼재되어 있었음
@@ -3129,3 +3133,475 @@ public class DefaultAdvisorAutoProxyCreator extends AbstractAdvisorAutoProxyCrea
 >   - 프록시를 만들어서 DI로 연결된 빈 사이에 적용해 타깃의 메서드 호출과정에 참여해서 부가기능을 제공하도록 만듦
 >   - 독립적으로 개발한 부가기능 모듈을 다양한 타깃 오브젝트의 메서드에 다이나믹하게 적용해줌
 > - (2) 바이트코드 생성과 조작을 통한 AOP
+>   - AspectJ는 타깃 오브젝트를 뜯어 고쳐서 부가기능을 직접 넣어주는 방식(바이트 코드 조작)
+>   - 클래스 파일 자체로 수정하거나 클래스가 JVM에 로딩되는 시점을 가로쳐서 바이트 코드를 조작하는 복잡한 방법을 사용함
+> - 바이트 코드 조작 방식을 사용하는 이유
+>   - (1) DI 컨테이너의 도움을 받아서 자동 프록시 생성 방식을 사용하지 않아도 AOP를 적용할 수 있음
+>   - (2) 프록시 방식보다 훨씬 강력하고 유연한 AOP가 가능함
+>     - 프록시 방식은 위, 아래, 위/아래만 코드를 추가할 수 있음. 중간에 코드를 추가못함
+>     - 또한, 타깃 내부적으로 호출되는 메서드 사이에도 코드를 추가하기 어려움
+
+
+<br>
+
+#### 👉 AOP 용어 
+
+> - 타깃 : 어드바이스(부가기능)을 부여한 대상, 주로 핵심기능을 담은 클래스를 지칭함
+> - 어드바이스 : 타깃 오브젝트에게 제공할 부가기능을 담은 모듈
+> - 조인 포인트 : 어드바이스가 적용될 수 있는 위치를 말함. 타깃 오브젝트가 구현한 인터페이스의 모든 메서드는 조인 포인트가됨
+> - 포인트 컷 : 어드바이스를 적용할 조인 포인트를 선별하는 작업. 또는 그 기능을 정의한 모둘을 말함
+> - 프록시 : 클라이언트와 타깃 오브젝트 사이에 투명하게 존재하면서 부가기능을 제공하는 오브젝트를 말함
+>   - 클라이언트의 메서드 호출을 대신 받아서 타깃에게 위임해줌
+> - 어드바이저 : '어드바이스'와 '포인트 컷'을 하나씩 갖고 있는 오브젝트
+> - 애스팩트 : AOP의 기본 모듈, 한 개 또는 그 이상의 포인트 컷과 어드바이스의 조합으로 만들어짐
+
+<br>
+
+#### 👉 AOP 네임스페이스 
+
+```java
+
+// aop 네임스페이스 선언
+// aop 네임스페이스를 적용한 aop 설정 빈 
+// XML 파일 
+<beans xmlns="http://www.springframework.org/schema/beans"
+xmlns:aop="http://www.springframework.org/schema/aop"
+xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+xsi:schemaLocation="
+http://www.springframework.org/schema/beans
+http://www.springframework.org/schema/beans/spring-beans.xsd
+http://www.springframework.org/schema/aop
+http://www.springframework.org/schema/aop/spring-aop.xsd">
+
+    <!-- AOP 기능 활성화 -->
+    <aop:aspectj-autoproxy/>
+
+    <!-- Target 클래스 정의 -->
+    <bean id="myService" class="com.example.MyService" />
+
+    <!-- Aspect 클래스 정의 -->
+    <bean id="loggingAspect" class="com.example.LoggingAspect" />
+
+</beans>
+
+// Aspect 클래스 정의 (Java 코드)
+@Aspect
+public class LoggingAspect {
+
+    @Before("execution(* com.example.MyService.*(..))")
+    public void logBeforeMethod() {
+        System.out.println("A method in MyService is about to be called.");
+    }
+}
+
+
+// Target 클래스 정의 (Java 코드)
+public class MyService {
+
+    public void performTask() {
+        System.out.println("Task is being performed.");
+    }
+}
+
+```
+
+> - AOP를 적용하려면 최소한 네 가지 빈을 등록해야함
+>   - (1) 자동프록시 생성기 
+>     - 빈 오브젝트를 생성하는 과정에서 빈 후처리기로 참여함
+>     - 빈으로 등록된 어드바이저를 이용해서 프록시를 자동으로 생성함
+>   
+>   - (2) 어드바이저
+>     - 부가기능을 구현한 클래스를 빈으로 등록함
+>   
+>   - (3) 포인트 컷
+>   
+>   - (4) 어드바이저 
+>     - 어드바이스와 포인트 컷을 갖고 있는 오브젝트
+>     - 자동 프록시 생성기에 의해 자동 검색되어 사용됨
+
+
+<br>
+
+#### 👉 트랜잭션 속성
+
+```java
+
+// 트랜잭션 경계 설정 코드 
+```
+
+> - TransactionDefinition 인터페이스는 트랜잭션의 동작 방식에 영향을 줄 수 있는 네 가지 속성을 정의하고 있음
+> - (1) 트랜잭션 전파 
+>   - 트랜잭션의 경계에서 이미 진행중인 트랜잭션이 있거나 없을 때 어떻게 동작할지 결정함 
+>   - <img src="/images/트랜잭션전파속성요약.png" width="400" height="400">
+>   - (1) PROPAGATION_REQUIRED : 진행중인 트랜잭션이 없으면 새로 시작하고, 이미 시작된 트랜잭션이 있으면 이에 참여함
+>   - (2) PROPAGATION_REQUIRES_NEW : 항상 새로운 트랜잭션을 시작함
+>   - (3) PROPAGATION_SUPPORTS : 진행중인 트랜잭션이 있으면 참여하고, 없으면 트랜잭션 없이 실행함
+>   - (4) PROPAGATION_NOT_SUPPORTED : 트랜잭션 없이 동작하도록 만들 수 있음, 진행 중인 트랜잭션이 있어도 무시함
+>   
+> - (2) 격리 수준
+>   - 여러 트랜잭션이 동시에 처리될 때, 특정 트랜잭션이 다른 트랜잭션에서 변경하거나 조회하는 데이터를 볼 수 있게 허용할지 여부를 결정하는 것
+>   - <img src="/images/격리수준종류.png" width="400" height="400">
+>   - 모든 DB 트랜잭션은 격리수준을 갖고 있어야함
+>   - 적절하게 격리수준을 조정해서 가능한 한 많은 트랜잭션을 동시에 진행시키면서도 문제가 발생하지 않게 하는 제어가 필요함
+>     - (1) 제한시간 
+>       - 트랜잭션을 수행하는 제한시간을 설정할 수 있음
+>     
+>     - (2) 읽기 전용
+>       - 트랜잭션 내에서 데이터를 조작하는 시도를 막을 수 있음
+>       - 또한, 데이터 액세스 기술에 따라 성능이 향상될 수 있음
+>   - 참고할 만한 블로그 : https://mangkyu.tistory.com/299
+
+
+<br>
+
+#### 👉 트랜잭션 인터셉터와 트랜잭션 속성
+
+> - TransactionInterceptor는 스프링에서 트랜잭션 경계설정 어드바이스를 사용할 수 있도록 만듦
+> - TransactionAdvice와 동작 방식이 크게 다르지 않지만, 트랜잭션 정의를 메서드 이름 패턴을 이용해서 다르게 지정할 수 있는 방법이 추가됨
+> - TransactionInterceptor는 2 가지 종류의 예외처리 방식이 있음
+>   - (1) 런타임 예외가 발생하면 트랜잭션을 롤백함
+>   - (2) 체크 예외가 발생하면, 예외 상황으로 해석하지 않고 일종의 비즈니스 로직에 따른 의미가 있는 리턴 방식의 한가지로 인식해서 트랜잭션을 커밋함
+
+
+<br>
+
+#### 👉 메서드 이름 패턴을 이용한 트랜잭션 속성 지정
+
+```java
+
+// XML 기반 트랜잭션 속성 정의
+<beans xmlns="http://www.springframework.org/schema/beans"
+xmlns:tx="http://www.springframework.org/schema/tx"
+xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+xsi:schemaLocation="
+http://www.springframework.org/schema/beans
+http://www.springframework.org/schema/beans/spring-beans.xsd
+http://www.springframework.org/schema/tx
+http://www.springframework.org/schema/tx/spring-tx.xsd">
+
+    <!-- 트랜잭션 매니저 설정 -->
+    <bean id="transactionManager" class="org.springframework.jdbc.datasource.DataSourceTransactionManager">
+        <property name="dataSource" ref="dataSource"/>
+    </bean>
+
+    <!-- 트랜잭션 속성 정의 -->
+    <tx:advice id="txAdvice">
+        <tx:attributes>
+            <!-- 모든 메서드에 기본 트랜잭션 속성 적용 -->
+            <tx:method name="*" propagation="REQUIRED" isolation="DEFAULT" timeout="30" read-only="false" rollback-for="java.lang.Exception"/>
+        </tx:attributes>
+    </tx:advice>
+
+    <!-- 트랜잭션 관리 적용 -->
+    <aop:config>
+        <aop:pointcut id="servicePointcut" expression="execution(* com.example.service.*.*(..))"/>
+        <aop:advisor advice-ref="txAdvice" pointcut-ref="servicePointcut"/>
+    </aop:config>
+
+</beans>
+
+// 애너테이션으로 트랜잭션 속성 지정
+
+@Service
+public class MyService {
+
+    // 기본 트랜잭션 속성
+    @Transactional
+    public void defaultTransaction() {
+        // 트랜잭션 관리되는 비즈니스 로직
+    }
+
+    // 트랜잭션 속성 정의
+    @Transactional(
+            propagation = Propagation.REQUIRED,  // 전파 수준
+            isolation = Isolation.READ_COMMITTED,  // 격리 수준
+            timeout = 30,  // 타임아웃(초)
+            readOnly = false,  // 읽기/쓰기 모드
+            rollbackFor = Exception.class  // 롤백 조건
+    )
+    public void customTransaction() {
+        // 커스텀 트랜잭션 관리되는 비즈니스 로직
+    }
+}
+
+
+
+```
+
+> - 트랜잭션 속성은 위와 같이 정의할 수 있음
+
+
+<br>
+
+#### 👉 포인트 컷과 트랜잭션 속성의 적용 전략
+
+> - (1) 트랜잭션 포인트 컷 표현식을 타입 패턴이나 빈 이름을 이용함
+>   - 트랜잭션을 적용할 타깃 클래스의 메서드를 모두 트랜잭션 적용 후보가 되는 것이 좋음
+>   - 비즈니스 로직을 담고있는 클래스라면 메서드 단위까지 세밀하게 포인트컷을 정의할 필요는 없음
+>   - 트랜잭션 전파 방식을 고려해야함. 특정 트랜잭션이 다른 트랜잭션에 참여할 가능성이 있음. 예를들어서, UserService.add()
+>   - 쓰기 작업이 없는 단순한 조회 작업만하는 메서드에도 모두 트랜잭션을 적용하는 게 좋음
+>   - 조회의 경우 읽기 전용으로 트랜잭션 속성을 설정해두면 그만크 성능의 향상을 가져올 수 있음
+>   - 트랜잭션용 포인트 컷 표현식에는 메서드나 파라미터, 예외에 대한 패턴을 적용하지 않는게 좋음
+> 
+> - (2) 공통된 메서드 이름 규칙을 통해 최소한의 트랜잭션 어드바이스와 속성을 정의함
+>   - 기준이 되는 몇 가지 트랜잭션 속성을 정의하고 그에 따라 적절한 메서드 명명 규칙을 만들어서 하나의 어드바이스만으로 애플리케이션의 모든 서비스 빈에 트랜잭션 속성을 지정
+>   - 예외적인 경우는 트랜잭션 어드바이스와 포인트 컷을 새롭게 추가할 필요가 있음
+> 
+> - (3) 프록시 방식 AOP 같은 타깃 오브젝트 내의 메서드를 호출할 때는 적용되지 않음
+>   - <img src="/images/타깃안에서의호출에는적용되지않는프록시.png" width="400" height="400">
+>   - 타깃 오브젝트가 자기 자신의 메서드를 호출할 때는 프록시를 통한 부가기능의 적용이 일어나지 않음
+>   - 위의 그림을 설명하자면, 타깃 오브젝트 내로 들어와서 타깃 오브젝트의 다른 메서드를 호출하는 경우에는 프록시를 거치지 않고 직접 타깃 메서드가 호출되기 때문에 부가기능이 적용되지 않음
+>   - 타깃 안에서의 호출에는 프록시가 적용되지 않는 문제를 해결할 수 있는 방법은 아래와 같이 2가지 방식이 있음
+>     - (1) 스프링 API 이용, 프록시를 이용하도록 강제함(별로 추천하지 않는 방식)
+>     - (2) 타깃 오브젝트의 바이트 코드를 직접 조작함(AspectJ를 이용한 방식)
+  
+
+<br>
+
+#### 👉 트랜잭션 속성 적용, 트랜잭션 경계설정의 일원화
+
+```java
+
+// XML 설정 기반 포인트컷 표현식 등록 예시 
+<beans xmlns="http://www.springframework.org/schema/beans"
+xmlns:aop="http://www.springframework.org/schema/aop"
+xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+xsi:schemaLocation="
+http://www.springframework.org/schema/beans
+http://www.springframework.org/schema/beans/spring-beans.xsd
+http://www.springframework.org/schema/aop
+http://www.springframework.org/schema/aop/spring-aop.xsd">
+
+    <!-- Aspect 정의 -->
+    <bean id="loggingAspect" class="com.example.LoggingAspect"/>
+
+    <!-- 포인트컷 표현식 등록 -->
+    <aop:config>
+        <!-- 포인트컷 정의: com.example.service 패키지의 모든 메서드 -->
+        <aop:pointcut id="servicePointcut"
+expression="execution(* com.example.service.*.*(..))"/>
+
+        <!-- 포인트컷을 기반으로 Aspect 적용 -->
+        <aop:advisor advice-ref="loggingAspect" pointcut-ref="servicePointcut"/>
+    </aop:config>
+
+</beans>
+
+// Aspect 클래스 예시 
+@Aspect
+public class LoggingAspect {
+
+    @Before("execution(* com.example.service.*.*(..))")
+    public void logBeforeMethod() {
+        System.out.println("A method in service is about to be called.");
+    }
+}
+
+```
+
+> - 트랜잭션 경계설정의 부가기능을 여러 계층에서 중구난방으로 적용하는 것은 좋지 않음
+> - 일반적으로 특정 계층의 경계를 트랜잭션 경계와 일치시키는 것이 바람직함
+> - 비즈니스 로직을 담고있는 서비스 계층 오브젝트의 메서드가 트랜잭션 경계를 부여하기에 적절함
+
+
+<br>
+
+
+#### 👉 트랜잭션 속성을 가진 트랜잭션 어드바이스 등록
+
+```java
+
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:tx="http://www.springframework.org/schema/tx"
+       xmlns:aop="http://www.springframework.org/schema/aop"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xsi:schemaLocation="
+           http://www.springframework.org/schema/beans
+           http://www.springframework.org/schema/beans/spring-beans.xsd
+           http://www.springframework.org/schema/tx
+           http://www.springframework.org/schema/tx/spring-tx.xsd
+           http://www.springframework.org/schema/aop
+           http://www.springframework.org/schema/aop/spring-aop.xsd">
+
+    <!-- DataSource 설정 (예시) -->
+    <bean id="dataSource" class="org.apache.commons.dbcp2.BasicDataSource">
+        <!-- DataSource 속성 설정 -->
+    </bean>
+
+    <!-- 트랜잭션 매니저 설정 -->
+    <bean id="transactionManager" class="org.springframework.jdbc.datasource.DataSourceTransactionManager">
+        <property name="dataSource" ref="dataSource" />
+    </bean>
+
+    <!-- 트랜잭션 속성을 정의하는 TransactionInterceptor -->
+    <bean id="transactionInterceptor" class="org.springframework.transaction.interceptor.TransactionInterceptor">
+        <property name="transactionManager" ref="transactionManager" />
+        <property name="transactionAttributes">
+            <props>
+                <!-- 기본 트랜잭션 설정 -->
+                <prop key="*">PROPAGATION_REQUIRED,ISOLATION_DEFAULT,timeout_30,readOnly</prop>
+                
+                <!-- get으로 시작하는 메서드: 읽기 전용 트랜잭션 -->
+                <prop key="get*">PROPAGATION_REQUIRED,ISOLATION_DEFAULT,readOnly</prop>
+                
+                <!-- save로 시작하는 메서드: 새로운 트랜잭션 시작 -->
+                <prop key="save*">PROPAGATION_REQUIRES_NEW,ISOLATION_DEFAULT</prop>
+            </props>
+        </property>
+    </bean>
+
+    <!-- AOP 설정: 포인트컷과 트랜잭션 어드바이저 정의 -->
+    <aop:config>
+        <aop:pointcut id="serviceLayer"
+                      expression="execution(* com.example.service.*.*(..))"/>
+        <aop:advisor pointcut-ref="serviceLayer" advice-ref="transactionInterceptor"/>
+    </aop:config>
+
+</beans>
+```
+
+> - TransactionAdvice 클래스로 정의했던 어드바이스 빈을 스프링의 TransactionInterceptor를 이용하도록 변경
+
+<br>
+
+#### 👉 어노테이션 트랜잭션 속성과 포인트 컷
+
+> - 가끔 클래스나 메서드에 따라 제각각 속성이 다른, 세밀하게 튜닝된 트랜잭션 속성을 적용해야하는 경우가 있음
+> - 설정 파일에서 패턴으로 분류 가능한 그룹을 만들어서 일관적으로 속성을 부여하는 방식 대신에 직접 타깃에 트랜잭션 속성정보를 가진 '애노테이션'을 지정하는 방법 사용
+
+
+<br>
+
+#### 👉 트랜잭션 어노테이션, @Transactional
+
+```java
+
+/**
+ * Describes transaction attributes on a method or class.
+ * <p>
+ * Can be used directly on a method or a class. If you put it on a class, all methods of the class will share the same transaction configuration.
+ */
+@Target({ElementType.METHOD, ElementType.TYPE})
+@Retention(RetentionPolicy.RUNTIME)
+@Inherited
+@Documented
+public @interface Transactional {
+
+    // 트랜잭션 전파 수준을 설정 (기본값은 REQUIRED)
+    Propagation propagation() default Propagation.REQUIRED;
+
+    // 트랜잭션 격리 수준을 설정 (기본값은 DEFAULT)
+    Isolation isolation() default Isolation.DEFAULT;
+
+    // 트랜잭션 타임아웃을 설정 (기본값은 -1, 타임아웃 없음)
+    int timeout() default TransactionDefinition.TIMEOUT_DEFAULT;
+
+    // 트랜잭션이 읽기 전용인지 여부 설정 (기본값은 false)
+    boolean readOnly() default false;
+
+    // 트랜잭션 롤백을 트리거할 예외 유형을 설정
+    Class<? extends Throwable>[] rollbackFor() default {};
+
+    // 롤백을 트리거할 예외의 클래스 이름을 설정
+    String[] rollbackForClassName() default {};
+
+    // 트랜잭션이 롤백되지 않도록 할 예외 유형을 설정
+    Class<? extends Throwable>[] noRollbackFor() default {};
+
+    // 트랜잭션이 롤백되지 않도록 할 예외의 클래스 이름을 설정
+    String[] noRollbackForClassName() default {};
+}
+```
+
+> - @Transactional 애너테이션의 타깃은 메서드와 타입. 따라서 메서드, 클래스, 인터페이스에 적용 가능함
+> - 스프링은 @Transactional이 부여된 모든 오브젝트를 자동으로 타깃 오브젝트로 인식함
+> - @Transactional은 기본적으로 트랜잭션 속성을 정의하는 것이지만 동시에 포인트 컷의 자동등록에도 사용됨
+
+<br>
+
+#### 👉 대체 정책 
+
+```java
+// 대체정책 코드 
+
+// @Transactional 애너테이션을 이용한 트랜잭션 속성 정의
+
+```
+
+> - 스프링은 @Transactional을 적용할 때 4 단계의 '대체 정책'을 이용하게 해줌
+> - 메서드의 속성을 확인할 때 타깃 메서드, 타깃 클래스, 선언 메서드, 선언 타입의 순서에 따라 @Transactional이 적용됐는지 확인함
+> - 가장 먼저 발견되는 속성 정보를 사용하게 하는 방법
+
+<br>
+
+#### 👉 선언적 트랜잭션과 트랜잭션 전파 속성
+
+```java
+// 트랜잭션 속성을 사용하는 어드바이스 
+
+// 스키마의 태그를 이용한 트랜잭션 어드바이스 정의 
+
+```
+
+> - <img src="/images/트랜잭션경계와트랜잭션전파.jpeg" width="400" height="400">
+> - 스프링은 트랜잭션 전파 속성을 선언적으로 적용할 수 있는 기능을 지원함
+> - REQUIRED 전파 속성을 가진 메서드를 결합해서 다양한 크기의 트랜잭션 작업을 형성할 수 있음
+> - 트랜잭션 전파 속성 적용 예시
+>   - '그 날의 이벤트의 선정 내역을 받아서 한 번에 처리하는 기능, 처리되지 않는 이벤트 신청 정보를 모두 가져와 DB에 등록하고 그에 따른 정보를 조작해줌'
+>   - 하루치 이벤트 신청 내역을 처리하는 기능은 반드시 하나의 작업 단위로 처리되어야함, 즉 트랜잭션 경계 설정을 통해 크기를 조절해야함 
+>   - EventService.processDailyEventRegistration()으로 구현
+>   - processDailyEventRegistration() 에서 작업 중간에 사용자 등록을 할 필요가 있음. 즉, 중간 중간에 UserService.add()를 호출함
+>   - UserService.add()는 독자적인 트랜잭션을 시작하는 대신에 processDailyEventRegistration()의 트랜잭션에 참여해야함
+>   - '트랜잭션 전파'라는 기법을 통해 UserService.add()는 독자적인 트랜잭션 단위가 될 수도 있고, 다른 트랜잭션 일부로 참여할 수 있음
+> - AOP를 이용해 코드 외부에서 트랜잭션의 기능을 부여해주고 속성을 지정할 수 있게 하는 방식을 '선언적 트랜잭션'이라고함
+> - TransactionTemplate이나 개별 데이터 기술의 트랜잭션 API를 사용해 직접 코드 안에서 사용하는 방법을 '프로그램에 의한 트랜잭션'이라고함
+
+<br>
+
+#### 👉 트랜잭션 동기화와 테스트
+
+> - 트랜잭션의 자유로운 전파와 그로인해 유연한 개발이 가능할 수 있었던 기술적인 배경에는 2가지 기술이 있음
+>   - (1) AOP 덕분에 프록시를 이용한 트랜잭션 부가기능을 간단하게 애플리케이션 전반에 적용
+>   - (2) 스프링 트랜잭션인 추상화(서비스 추상화)
+>     - DAO 에서 일어나는 작업들을 하나의 트랜잭션으로 묶어서 추상 레벨에서 관리하게 해주는 기술
+
+<br>
+
+#### 👉 트랜잭션 매니저와 트랜잭션 동기화
+
+> - 트랜잭션 추상화 기술의 핵심은 '트랜잭션 매니저'와 '트랜잭션 동기화'
+> - '트랜잭션 동기화' 덕분에 진행 중인 트랜잭션이 있는지 확인하고, 트랜잭션 전파 속성에 따라 이에 참여하도록 만듦
+
+<br>
+
+#### 👉 @Rollback
+
+> - @Transactional은 기본적으로 트랜잭션을 강제 롤백시키도록 설정되어 있음
+> - 롤백 기능을 제어하려면 별도의 어노테이션을 사용해야함
+> - @Rollback은 롤백 여부를 지정하는 값을 갖고 있음
+> - @Rollback(false)로 설정하면 롤백을 하지 않도록 설정할 수 있음
+
+
+<br>
+
+#### 👉 @TransactionConfiguration 
+
+```java
+
+// @TransactionConfiguration 예시 코드 
+
+```
+
+> - 클래스 레벨에 트랜잭션 설정을 부여할 수 있음
+> - 해당 어노테이션을 사용하면 '롤백'에 대한 공통속성을 지정할 수 있음
+> - @Transactional(propagation = Propagation.NEVER) 메서드에 부여하면 클래스 레벨의 @Transactional 설정을 무시함 
+
+
+
+
+
+
+
+<br>
+
+#### 👉 
