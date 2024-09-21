@@ -2330,4 +2330,802 @@ public class NameMatchClassMethodPointcut extends NameMatchMethodPointcut {
 > - 이로써 독립적이며 여러 프록시가 공유할 수 있는 어드바이스와 포인트 컷으로 확장 기능을 분리할 수 있음 
 
 
+<br>
 
+#### 👉 스프링 AOP
+
+> - 결국 우리가 하고자 하는 작업은 다음과 같음
+> - 비즈니스 로직에 반복적으로 등장하는 트랜잭션 코드를 깔끔하고 효과적으로 분리하는 것 
+> - 즉, 메서드가 호출하는 과정에서 다이나믹하게 참여해서 부가기능을 제공해주는 것 
+
+
+<br>
+
+#### 👉 자동 프록시 생성
+
+```java
+
+@SuppressWarnings("serial")
+public class ProxyFactoryBean extends ProxyCreatorSupport
+		implements FactoryBean<Object>, BeanClassLoaderAware, BeanFactoryAware {
+
+	/**
+	 * This suffix in a value in an interceptor list indicates to expand globals.
+	 */
+	public static final String GLOBAL_SUFFIX = "*";
+
+
+	protected final Log logger = LogFactory.getLog(getClass());
+
+	@Nullable
+	private String[] interceptorNames;
+
+	@Nullable
+	private String targetName;
+
+	private boolean autodetectInterfaces = true;
+
+	private boolean singleton = true;
+
+	private AdvisorAdapterRegistry advisorAdapterRegistry = GlobalAdvisorAdapterRegistry.getInstance();
+
+	private boolean freezeProxy = false;
+
+	@Nullable
+	private transient ClassLoader proxyClassLoader = ClassUtils.getDefaultClassLoader();
+
+	private transient boolean classLoaderConfigured = false;
+
+	@Nullable
+	private transient BeanFactory beanFactory;
+
+	/** Whether the advisor chain has already been initialized. */
+	private boolean advisorChainInitialized = false;
+
+	/** If this is a singleton, the cached singleton proxy instance. */
+	@Nullable
+	private Object singletonInstance;
+
+
+	/**
+	 * Set the names of the interfaces we're proxying. If no interface
+	 * is given, a CGLIB for the actual class will be created.
+	 * <p>This is essentially equivalent to the "setInterfaces" method,
+	 * but mirrors TransactionProxyFactoryBean's "setProxyInterfaces".
+	 * @see #setInterfaces
+	 * @see AbstractSingletonProxyFactoryBean#setProxyInterfaces
+	 */
+	public void setProxyInterfaces(Class<?>[] proxyInterfaces) throws ClassNotFoundException {
+		setInterfaces(proxyInterfaces);
+	}
+
+	/**
+	 * Set the list of Advice/Advisor bean names. This must always be set
+	 * to use this factory bean in a bean factory.
+	 * <p>The referenced beans should be of type Interceptor, Advisor or Advice
+	 * The last entry in the list can be the name of any bean in the factory.
+	 * If it's neither an Advice nor an Advisor, a new SingletonTargetSource
+	 * is added to wrap it. Such a target bean cannot be used if the "target"
+	 * or "targetSource" or "targetName" property is set, in which case the
+	 * "interceptorNames" array must contain only Advice/Advisor bean names.
+	 * <p><b>NOTE: Specifying a target bean as final name in the "interceptorNames"
+	 * list is deprecated and will be removed in a future Spring version.</b>
+	 * Use the {@link #setTargetName "targetName"} property instead.
+	 * @see org.aopalliance.intercept.MethodInterceptor
+	 * @see org.springframework.aop.Advisor
+	 * @see org.aopalliance.aop.Advice
+	 * @see org.springframework.aop.target.SingletonTargetSource
+	 */
+	public void setInterceptorNames(String... interceptorNames) {
+		this.interceptorNames = interceptorNames;
+	}
+
+	/**
+	 * Set the name of the target bean. This is an alternative to specifying
+	 * the target name at the end of the "interceptorNames" array.
+	 * <p>You can also specify a target object or a TargetSource object
+	 * directly, via the "target"/"targetSource" property, respectively.
+	 * @see #setInterceptorNames(String[])
+	 * @see #setTarget(Object)
+	 * @see #setTargetSource(org.springframework.aop.TargetSource)
+	 */
+	public void setTargetName(String targetName) {
+		this.targetName = targetName;
+	}
+
+	/**
+	 * Set whether to autodetect proxy interfaces if none specified.
+	 * <p>Default is "true". Turn this flag off to create a CGLIB
+	 * proxy for the full target class if no interfaces specified.
+	 * @see #setProxyTargetClass
+	 */
+	public void setAutodetectInterfaces(boolean autodetectInterfaces) {
+		this.autodetectInterfaces = autodetectInterfaces;
+	}
+
+	/**
+	 * Set the value of the singleton property. Governs whether this factory
+	 * should always return the same proxy instance (which implies the same target)
+	 * or whether it should return a new prototype instance, which implies that
+	 * the target and interceptors may be new instances also, if they are obtained
+	 * from prototype bean definitions. This allows for fine control of
+	 * independence/uniqueness in the object graph.
+	 */
+	public void setSingleton(boolean singleton) {
+		this.singleton = singleton;
+	}
+
+	/**
+	 * Specify the AdvisorAdapterRegistry to use.
+	 * Default is the global AdvisorAdapterRegistry.
+	 * @see org.springframework.aop.framework.adapter.GlobalAdvisorAdapterRegistry
+	 */
+	public void setAdvisorAdapterRegistry(AdvisorAdapterRegistry advisorAdapterRegistry) {
+		this.advisorAdapterRegistry = advisorAdapterRegistry;
+	}
+
+	@Override
+	public void setFrozen(boolean frozen) {
+		this.freezeProxy = frozen;
+	}
+
+	/**
+	 * Set the ClassLoader to generate the proxy class in.
+	 * <p>Default is the bean ClassLoader, i.e. the ClassLoader used by the
+	 * containing BeanFactory for loading all bean classes. This can be
+	 * overridden here for specific proxies.
+	 */
+	public void setProxyClassLoader(@Nullable ClassLoader classLoader) {
+		this.proxyClassLoader = classLoader;
+		this.classLoaderConfigured = (classLoader != null);
+	}
+
+	@Override
+	public void setBeanClassLoader(ClassLoader classLoader) {
+		if (!this.classLoaderConfigured) {
+			this.proxyClassLoader = classLoader;
+		}
+	}
+
+	@Override
+	public void setBeanFactory(BeanFactory beanFactory) {
+		this.beanFactory = beanFactory;
+		checkInterceptorNames();
+	}
+
+
+	/**
+	 * Return a proxy. Invoked when clients obtain beans from this factory bean.
+	 * Create an instance of the AOP proxy to be returned by this factory.
+	 * The instance will be cached for a singleton, and create on each call to
+	 * {@code getObject()} for a proxy.
+	 * @return a fresh AOP proxy reflecting the current state of this factory
+	 */
+	@Override
+	@Nullable
+	public Object getObject() throws BeansException {
+		initializeAdvisorChain();
+		if (isSingleton()) {
+			return getSingletonInstance();
+		}
+		else {
+			if (this.targetName == null) {
+				logger.info("Using non-singleton proxies with singleton targets is often undesirable. " +
+						"Enable prototype proxies by setting the 'targetName' property.");
+			}
+			return newPrototypeInstance();
+		}
+	}
+
+	/**
+	 * Return the type of the proxy. Will check the singleton instance if
+	 * already created, else fall back to the proxy interface (in case of just
+	 * a single one), the target bean type, or the TargetSource's target class.
+	 * @see org.springframework.aop.framework.AopProxy#getProxyClass
+	 */
+	@Override
+	@Nullable
+	public Class<?> getObjectType() {
+		synchronized (this) {
+			if (this.singletonInstance != null) {
+				return this.singletonInstance.getClass();
+			}
+		}
+		try {
+			// This might be incomplete since it potentially misses introduced interfaces
+			// from Advisors that will be lazily retrieved via setInterceptorNames.
+			return createAopProxy().getProxyClass(this.proxyClassLoader);
+		}
+		catch (AopConfigException ex) {
+			if (getTargetClass() == null) {
+				if (logger.isDebugEnabled()) {
+					logger.debug("Failed to determine early proxy class: " + ex.getMessage());
+				}
+				return null;
+			}
+			else {
+				throw ex;
+			}
+		}
+	}
+
+	@Override
+	public boolean isSingleton() {
+		return this.singleton;
+	}
+
+
+	/**
+	 * Return the singleton instance of this class's proxy object,
+	 * lazily creating it if it hasn't been created already.
+	 * @return the shared singleton proxy
+	 */
+	private synchronized Object getSingletonInstance() {
+		if (this.singletonInstance == null) {
+			this.targetSource = freshTargetSource();
+			if (this.autodetectInterfaces && getProxiedInterfaces().length == 0 && !isProxyTargetClass()) {
+				// Rely on AOP infrastructure to tell us what interfaces to proxy.
+				Class<?> targetClass = getTargetClass();
+				if (targetClass == null) {
+					throw new FactoryBeanNotInitializedException("Cannot determine target class for proxy");
+				}
+				setInterfaces(ClassUtils.getAllInterfacesForClass(targetClass, this.proxyClassLoader));
+			}
+			// Initialize the shared singleton instance.
+			super.setFrozen(this.freezeProxy);
+			this.singletonInstance = getProxy(createAopProxy());
+		}
+		return this.singletonInstance;
+	}
+
+	/**
+	 * Create a new prototype instance of this class's created proxy object,
+	 * backed by an independent AdvisedSupport configuration.
+	 * @return a totally independent proxy, whose advice we may manipulate in isolation
+	 */
+	private synchronized Object newPrototypeInstance() {
+		// In the case of a prototype, we need to give the proxy
+		// an independent instance of the configuration.
+		// In this case, no proxy will have an instance of this object's configuration,
+		// but will have an independent copy.
+		ProxyCreatorSupport copy = new ProxyCreatorSupport(getAopProxyFactory());
+
+		// The copy needs a fresh advisor chain, and a fresh TargetSource.
+		TargetSource targetSource = freshTargetSource();
+		copy.copyConfigurationFrom(this, targetSource, freshAdvisorChain());
+		if (this.autodetectInterfaces && getProxiedInterfaces().length == 0 && !isProxyTargetClass()) {
+			// Rely on AOP infrastructure to tell us what interfaces to proxy.
+			Class<?> targetClass = targetSource.getTargetClass();
+			if (targetClass != null) {
+				copy.setInterfaces(ClassUtils.getAllInterfacesForClass(targetClass, this.proxyClassLoader));
+			}
+		}
+		copy.setFrozen(this.freezeProxy);
+
+		return getProxy(copy.createAopProxy());
+	}
+
+	/**
+	 * Return the proxy object to expose.
+	 * <p>The default implementation uses a {@code getProxy} call with
+	 * the factory's bean class loader. Can be overridden to specify a
+	 * custom class loader.
+	 * @param aopProxy the prepared AopProxy instance to get the proxy from
+	 * @return the proxy object to expose
+	 * @see AopProxy#getProxy(ClassLoader)
+	 */
+	protected Object getProxy(AopProxy aopProxy) {
+		return aopProxy.getProxy(this.proxyClassLoader);
+	}
+
+	/**
+	 * Check the interceptorNames list whether it contains a target name as final element.
+	 * If found, remove the final name from the list and set it as targetName.
+	 */
+	private void checkInterceptorNames() {
+		if (!ObjectUtils.isEmpty(this.interceptorNames)) {
+			String finalName = this.interceptorNames[this.interceptorNames.length - 1];
+			if (this.targetName == null && this.targetSource == EMPTY_TARGET_SOURCE) {
+				// The last name in the chain may be an Advisor/Advice or a target/TargetSource.
+				// Unfortunately we don't know; we must look at type of the bean.
+				if (!finalName.endsWith(GLOBAL_SUFFIX) && !isNamedBeanAnAdvisorOrAdvice(finalName)) {
+					// The target isn't an interceptor.
+					this.targetName = finalName;
+					if (logger.isDebugEnabled()) {
+						logger.debug("Bean with name '" + finalName + "' concluding interceptor chain " +
+								"is not an advisor class: treating it as a target or TargetSource");
+					}
+					this.interceptorNames = Arrays.copyOf(this.interceptorNames, this.interceptorNames.length - 1);
+				}
+			}
+		}
+	}
+
+	/**
+	 * Look at bean factory metadata to work out whether this bean name,
+	 * which concludes the interceptorNames list, is an Advisor or Advice,
+	 * or may be a target.
+	 * @param beanName bean name to check
+	 * @return {@code true} if it's an Advisor or Advice
+	 */
+	private boolean isNamedBeanAnAdvisorOrAdvice(String beanName) {
+		Assert.state(this.beanFactory != null, "No BeanFactory set");
+		Class<?> namedBeanClass = this.beanFactory.getType(beanName);
+		if (namedBeanClass != null) {
+			return (Advisor.class.isAssignableFrom(namedBeanClass) || Advice.class.isAssignableFrom(namedBeanClass));
+		}
+		// Treat it as a target bean if we can't tell.
+		if (logger.isDebugEnabled()) {
+			logger.debug("Could not determine type of bean with name '" + beanName +
+					"' - assuming it is neither an Advisor nor an Advice");
+		}
+		return false;
+	}
+
+	/**
+	 * Create the advisor (interceptor) chain. Advisors that are sourced
+	 * from a BeanFactory will be refreshed each time a new prototype instance
+	 * is added. Interceptors added programmatically through the factory API
+	 * are unaffected by such changes.
+	 */
+	private synchronized void initializeAdvisorChain() throws AopConfigException, BeansException {
+		if (!this.advisorChainInitialized && !ObjectUtils.isEmpty(this.interceptorNames)) {
+			if (this.beanFactory == null) {
+				throw new IllegalStateException("No BeanFactory available anymore (probably due to serialization) " +
+						"- cannot resolve interceptor names " + Arrays.toString(this.interceptorNames));
+			}
+
+			// Globals can't be last unless we specified a targetSource using the property...
+			if (this.interceptorNames[this.interceptorNames.length - 1].endsWith(GLOBAL_SUFFIX) &&
+					this.targetName == null && this.targetSource == EMPTY_TARGET_SOURCE) {
+				throw new AopConfigException("Target required after globals");
+			}
+
+			// Materialize interceptor chain from bean names.
+			for (String name : this.interceptorNames) {
+				if (name.endsWith(GLOBAL_SUFFIX)) {
+					if (!(this.beanFactory instanceof ListableBeanFactory lbf)) {
+						throw new AopConfigException(
+								"Can only use global advisors or interceptors with a ListableBeanFactory");
+					}
+					addGlobalAdvisors(lbf, name.substring(0, name.length() - GLOBAL_SUFFIX.length()));
+				}
+
+				else {
+					// If we get here, we need to add a named interceptor.
+					// We must check if it's a singleton or prototype.
+					Object advice;
+					if (this.singleton || this.beanFactory.isSingleton(name)) {
+						// Add the real Advisor/Advice to the chain.
+						advice = this.beanFactory.getBean(name);
+					}
+					else {
+						// It's a prototype Advice or Advisor: replace with a prototype.
+						// Avoid unnecessary creation of prototype bean just for advisor chain initialization.
+						advice = new PrototypePlaceholderAdvisor(name);
+					}
+					addAdvisorOnChainCreation(advice);
+				}
+			}
+
+			this.advisorChainInitialized = true;
+		}
+	}
+
+
+	/**
+	 * Return an independent advisor chain.
+	 * We need to do this every time a new prototype instance is returned,
+	 * to return distinct instances of prototype Advisors and Advices.
+	 */
+	private List<Advisor> freshAdvisorChain() {
+		Advisor[] advisors = getAdvisors();
+		List<Advisor> freshAdvisors = new ArrayList<>(advisors.length);
+		for (Advisor advisor : advisors) {
+			if (advisor instanceof PrototypePlaceholderAdvisor ppa) {
+				if (logger.isDebugEnabled()) {
+					logger.debug("Refreshing bean named '" + ppa.getBeanName() + "'");
+				}
+				// Replace the placeholder with a fresh prototype instance resulting from a getBean lookup
+				if (this.beanFactory == null) {
+					throw new IllegalStateException("No BeanFactory available anymore (probably due to " +
+							"serialization) - cannot resolve prototype advisor '" + ppa.getBeanName() + "'");
+				}
+				Object bean = this.beanFactory.getBean(ppa.getBeanName());
+				Advisor refreshedAdvisor = namedBeanToAdvisor(bean);
+				freshAdvisors.add(refreshedAdvisor);
+			}
+			else {
+				// Add the shared instance.
+				freshAdvisors.add(advisor);
+			}
+		}
+		return freshAdvisors;
+	}
+
+	/**
+	 * Add all global interceptors and pointcuts.
+	 */
+	private void addGlobalAdvisors(ListableBeanFactory beanFactory, String prefix) {
+		String[] globalAdvisorNames =
+				BeanFactoryUtils.beanNamesForTypeIncludingAncestors(beanFactory, Advisor.class);
+		String[] globalInterceptorNames =
+				BeanFactoryUtils.beanNamesForTypeIncludingAncestors(beanFactory, Interceptor.class);
+		if (globalAdvisorNames.length > 0 || globalInterceptorNames.length > 0) {
+			List<Object> beans = new ArrayList<>(globalAdvisorNames.length + globalInterceptorNames.length);
+			for (String name : globalAdvisorNames) {
+				if (name.startsWith(prefix)) {
+					beans.add(beanFactory.getBean(name));
+				}
+			}
+			for (String name : globalInterceptorNames) {
+				if (name.startsWith(prefix)) {
+					beans.add(beanFactory.getBean(name));
+				}
+			}
+			AnnotationAwareOrderComparator.sort(beans);
+			for (Object bean : beans) {
+				addAdvisorOnChainCreation(bean);
+			}
+		}
+	}
+
+	/**
+	 * Invoked when advice chain is created.
+	 * <p>Add the given advice, advisor or object to the interceptor list.
+	 * Because of these three possibilities, we can't type the signature
+	 * more strongly.
+	 * @param next advice, advisor or target object
+	 */
+	private void addAdvisorOnChainCreation(Object next) {
+		// We need to convert to an Advisor if necessary so that our source reference
+		// matches what we find from superclass interceptors.
+		addAdvisor(namedBeanToAdvisor(next));
+	}
+
+	/**
+	 * Return a TargetSource to use when creating a proxy. If the target was not
+	 * specified at the end of the interceptorNames list, the TargetSource will be
+	 * this class's TargetSource member. Otherwise, we get the target bean and wrap
+	 * it in a TargetSource if necessary.
+	 */
+	private TargetSource freshTargetSource() {
+		if (this.targetName == null) {
+			// Not refreshing target: bean name not specified in 'interceptorNames'
+			return this.targetSource;
+		}
+		else {
+			if (this.beanFactory == null) {
+				throw new IllegalStateException("No BeanFactory available anymore (probably due to serialization) " +
+						"- cannot resolve target with name '" + this.targetName + "'");
+			}
+			if (logger.isDebugEnabled()) {
+				logger.debug("Refreshing target with name '" + this.targetName + "'");
+			}
+			Object target = this.beanFactory.getBean(this.targetName);
+			return (target instanceof TargetSource targetSource ? targetSource : new SingletonTargetSource(target));
+		}
+	}
+
+	/**
+	 * Convert the following object sourced from calling getBean() on a name in the
+	 * interceptorNames array to an Advisor or TargetSource.
+	 */
+	private Advisor namedBeanToAdvisor(Object next) {
+		try {
+			return this.advisorAdapterRegistry.wrap(next);
+		}
+		catch (UnknownAdviceTypeException ex) {
+			// We expected this to be an Advisor or Advice,
+			// but it wasn't. This is a configuration error.
+			throw new AopConfigException("Unknown advisor type " + next.getClass() +
+					"; can only include Advisor or Advice type beans in interceptorNames chain " +
+					"except for last entry which may also be target instance or TargetSource", ex);
+		}
+	}
+
+	/**
+	 * Blow away and recache singleton on an advice change.
+	 */
+	@Override
+	protected void adviceChanged() {
+		super.adviceChanged();
+		if (this.singleton) {
+			logger.debug("Advice has changed; re-caching singleton instance");
+			synchronized (this) {
+				this.singletonInstance = null;
+			}
+		}
+	}
+
+
+	//---------------------------------------------------------------------
+	// Serialization support
+	//---------------------------------------------------------------------
+
+	private void readObject(ObjectInputStream ois) throws IOException, ClassNotFoundException {
+		// Rely on default serialization; just initialize state after deserialization.
+		ois.defaultReadObject();
+
+		// Initialize transient fields.
+		this.proxyClassLoader = ClassUtils.getDefaultClassLoader();
+	}
+
+
+	/**
+	 * Used in the interceptor chain where we need to replace a bean with a prototype
+	 * on creating a proxy.
+	 */
+	private static class PrototypePlaceholderAdvisor implements Advisor, Serializable {
+
+		private final String beanName;
+
+		private final String message;
+
+		public PrototypePlaceholderAdvisor(String beanName) {
+			this.beanName = beanName;
+			this.message = "Placeholder for prototype Advisor/Advice with bean name '" + beanName + "'";
+		}
+
+		public String getBeanName() {
+			return this.beanName;
+		}
+
+		@Override
+		public Advice getAdvice() {
+			throw new UnsupportedOperationException("Cannot invoke methods: " + this.message);
+		}
+
+		@Override
+		public String toString() {
+			return this.message;
+		}
+	}
+
+}
+
+```
+
+> - 프록시 팩토리 빈 방식의 접근법의 한계는 다음과 같음
+> - (1) 부가기능이 타깃 오브젝트마다 새로 셍성해야함
+> - (2) 부가기능의 적용이 필요한 타깃 오브젝트마다 비슷한 내용의 ProxyFactoryBean 빈 설정 정보를 추가해야함
+
+
+<br>
+
+#### 👉 중복 문제의 접근 방법
+
+> - 변치않는 타깃으로의 위임과 부가기능 적용여부 판단이라는 부분은 코드 생성 기법을 이용하는 다이나믹 프록시 기술에 맡기고 변하는 부가기능 코드를 별도로 만들어서 다이나믹 프록시 생성 팩토리에 DI로 제공하는 방법을 사용
+> - 부가기능 로직인 트랜잭션 경계설정은 코드로 만들게하고, 기계적인 코드인 타깃 인터페이스의 구현, 위임, 부가기능 연동 부분은 자동 생성 처리
+
+<br>
+
+#### 👉 빈 후처리기를 이용한 자동 프록시 생성기
+
+> - 한번에 여러 개의 빈에 프록시를 적용할만한 방법이 없음
+> - 스프링은 컨터에너로서 제공하는 기능 중에서 변치않는 핵심 부분외에 대부분은 확장할 수 있도록 확장 포인트를 제공함
+> - BeanPostProcessor 인터페이스를 구현해서 만드는 '빈 후처리기' 
+>   - 빈 오브젝트를 다시 후처리할 수 있게 만듦(가공)
+> - DefaultAdvisorAutoProxyCreator는 어드바이저를 이용한 자동 프록시 생성기
+> - 스프링은 빈 후처리기가 빈으로 등록되어 있으면, 빈 오브젝트가 생성될 때마다 빈 후처리기에 보내서 후처리를 진행함
+> - 스프링이 생성하는 빈 오브젝트의 일부를 프록시로 포장하고, 프록시를 빈으로 대신 등록할 수 있음. 이것이 바로 '자동 프록시 생성 빈 후처리기'
+> - <img src="/images/빈후처리기를이용한프록시자동생성.jpeg" width="400" height="400">
+> - 적용할 빈을 선정하는 로직이 추가된 '포인트 컷'이 담긴 '어드바이저(어드바이스 + 포인트컷)'를 등록하고 빈 후처리기를 사요하면 여러 개의 타깃 오브젝트에 자동으로 프록시가 적용되게 할 수 있음
+
+
+<br>
+
+#### 👉 확장된 포인트 컷 
+
+> - 포인트 컷, 타깃 오브젝트의 메서드 중에서 어떤 메서드에 부가기능을 적용할지 선정해주는 역할을 담당
+> - '포인트 컷'은 '클래스 필터'와 '메서드 매처' 두 가지를 돌려주는 메서드를 갖고 있음
+> - 어드바이스 적용 판단 과정
+>   - (1) 적용할 클래스가 맞는지 확인 -> '클래스 필터'
+>   - (2) 적용할 메서드가 맞는지 확인 -> '메서드 매처'
+
+<br>
+
+#### 👉 DefaultAdvisorAutoProxyCreator 적용
+
+```java
+
+public class NameMatchClassMethodPointcut extends NameMatchMethodPointcut {
+	public void setMappedClassName(String mappedClassName) {
+		this.setClassFilter(new SimpleClassFilter(mappedClassName));
+	}
+	
+	static class SimpleClassFilter implements ClassFilter {
+		String mappedName;
+		
+		private SimpleClassFilter(String mappedName) {
+			this.mappedName = mappedName;
+		}
+
+		public boolean matches(Class<?> clazz) {
+			return PatternMatchUtils.simpleMatch(mappedName, clazz.getSimpleName());
+		}
+	}
+}
+
+```
+
+> - NameMatchClassMethodPointcut은 메서드 이름만 비교하던 포인트 컷 
+> - 이를 상속해서 주어진 이름 패턴을 가지고 클래스 이름을 비교하는 ClassFilter를 만듦
+
+
+<br>
+
+#### 👉 어드바이저를 이용하는 자동 프록시 생성기 등록
+
+```java
+
+@SuppressWarnings("serial")
+public class DefaultAdvisorAutoProxyCreator extends AbstractAdvisorAutoProxyCreator implements BeanNameAware {
+
+	/** Separator between prefix and remainder of bean name. */
+	public static final String SEPARATOR = ".";
+
+
+	private boolean usePrefix = false;
+
+	@Nullable
+	private String advisorBeanNamePrefix;
+
+
+	/**
+	 * Set whether to only include advisors with a certain prefix in the bean name.
+	 * <p>Default is {@code false}, including all beans of type {@code Advisor}.
+	 * @see #setAdvisorBeanNamePrefix
+	 */
+	public void setUsePrefix(boolean usePrefix) {
+		this.usePrefix = usePrefix;
+	}
+
+	/**
+	 * Return whether to only include advisors with a certain prefix in the bean name.
+	 */
+	public boolean isUsePrefix() {
+		return this.usePrefix;
+	}
+
+	/**
+	 * Set the prefix for bean names that will cause them to be included for
+	 * auto-proxying by this object. This prefix should be set to avoid circular
+	 * references. Default value is the bean name of this object + a dot.
+	 * @param advisorBeanNamePrefix the exclusion prefix
+	 */
+	public void setAdvisorBeanNamePrefix(@Nullable String advisorBeanNamePrefix) {
+		this.advisorBeanNamePrefix = advisorBeanNamePrefix;
+	}
+
+	/**
+	 * Return the prefix for bean names that will cause them to be included
+	 * for auto-proxying by this object.
+	 */
+	@Nullable
+	public String getAdvisorBeanNamePrefix() {
+		return this.advisorBeanNamePrefix;
+	}
+
+	@Override
+	public void setBeanName(String name) {
+		// If no infrastructure bean name prefix has been set, override it.
+		if (this.advisorBeanNamePrefix == null) {
+			this.advisorBeanNamePrefix = name + SEPARATOR;
+		}
+	}
+
+
+	/**
+	 * Consider {@code Advisor} beans with the specified prefix as eligible, if activated.
+	 * @see #setUsePrefix
+	 * @see #setAdvisorBeanNamePrefix
+	 */
+	@Override
+	protected boolean isEligibleAdvisorBean(String beanName) {
+		if (!isUsePrefix()) {
+			return true;
+		}
+		String prefix = getAdvisorBeanNamePrefix();
+		return (prefix != null && beanName.startsWith(prefix));
+	}
+
+}
+
+```
+
+> - DefaultAdvisorAutoProxyCreator는 등록된 빈 중에서 Advisor의 인터페이스를 구현한 것을 모두 찾음
+> - 그 다음 생성되는 모든 빈에 대해 어드바이저의 포인트 컷을 적용해보면서 프록시 적용 대상을 선정함
+> - 빈 클래스가 프록시 선정 대상이라면 프록시 생성하여 원래 빈 오브젝트와 바꿔치기함 
+> - 원래 빈 오브젝트는 프록시 뒤에 연결돼서 프록시를 통해서만 접근 가능하게 바꿈
+> - 자동 프록시 생성기를 적용한 후에는 더 이상 ProxyFactoryBean을 사용할 필요가 없음
+
+
+<br>
+
+
+#### 👉 포인트 컷 표현식을 이용한 포인트 컷 
+
+> - 포인트 컷 '메서드의 이름과 클래스의 이름 패턴을 각각 클래스 필터와 메서드 매처 오브젝트로 비교해서 선정하는 방식'
+> - 위의 클래스 필터나 메서드 매처 오브젝트를 일일이 만드는 것은 번거로움
+> - 스프링은 간단하고 효과적인 방법으로 포인트 컷의 클래스와 메서드 선정하는 알고리즘을 작성할 수 있는 방법을 제공함. 그것이 바로 '포인트 컷 표현식'임
+
+
+<br>
+
+
+#### 👉 포인트컷 표현식(AspectJ 포인트 컷 표현식)
+
+> - AspectJExpressionPointcut을 통해서 포인트 컷 표현식을 지원하는 포인트 컷을 적용할 수 있음
+> - 해당 클래스는 클래스와 메서드의 선정 알고리즘을 포인트 컷 표현식을 이용해 한 번에 지정할 수 있음
+>   - 간단한 문자열로 복잡한 선정 조건을 쉽게 만들어낼 수 있는 강력한 표현식을 지원함
+> - AspectJ 포인트 컷 표현식은 포인트 컷 지시자를 이용해서 작성함
+>   - 대표적으로 execution 지시자가 있음
+> - 또 특정 어노테이션이 타입, 메서드, 파라미터에 적용되어 있는 것을 보고 메서드를 선정하게 하는 포인트 컷을 만들 수 있음
+>   - 대표적으로 @Transactional 어노테이션을 이용한 선정이 있음
+> - 포인트 컷 표현식의 클래스 이름에 적용되는 패턴은 클래스 이름 패턴이 아니라 타입 패턴임
+> - 포인트 컷 표현식을 적용하고 나서 이에 대해 적절한 테스트를 해야함
+>   - (1) 부가기능이 제대로 적용되는지 확인
+>   - (2) 적용대상이 아닌 빈들에 적용되지 않는지 확인
+
+<br>
+
+
+#### 👉 AOP란 무엇인가?
+
+> - 앞의 과정을 총 정리하면서 AOP 개념 설명
+> - (1) 트랜잭션 서비스 추상화
+>   - 트랜잭션 경계 설정 코드와 비즈니스 로직이 혼재되어 있었음
+>   - 이에 따라 특정 트랜잭션 기술에 종속되어 버린 코드가 됨. 예를들어서, JDBC, JTA, Hibernate 등은 트랜잭션 코드가 다름
+>   - 스프링은 이를 해결하고자 '서비스 추상화' 기술을 적용한 '트랜잭션 추상화 기술' 지원
+>     - 트랜잭션 적용이라는 추상적인 작업 내용은 유지한 채로 구체적인 구현법을 자유롭게 구성할 수 있도록 만듦
+> 
+> - (2) 프록시와 데코레이터 패턴
+>   - 트랜잭션을 어떻게 다룰 것인가는 '서비스 추상화'를 통해 코드에서 제거했지만, 여전히 비즈니스 로직에는 트랜잭션을 적용하고 있다는 사실은 드러나 있음
+>   - 이를 해결하고자 고전적인 디자인 패턴 적용 방식을 사용함
+>   - DI를 이용하여 데코레이터 패턴을 적용함
+>   - 투명한 부가기능 부여를 가능하게 하는 데코레이터 패턴의 적용 덕에 비즈니스 로직을 담당하는 클래스와 부가기능을 담당하는 프록시(데코레이터)를 만들고 이를 DI로 연결함.
+> 
+> - (3) 다이나믹 프록시와 프록시 팩토리 빈
+>   - 비즈니스 로직 인터페이스의 모든 메서드마다 트랜잭션 기능을 부여하는 코드를 넣어 프록시 클래스를 만드는 것은 번거로움(디자인 패턴을 직접 적용하는 것은 번거로움)
+>   - 프록시 오브젝트를 런타임시에 만들어주는 JDK 다이나믹 프록시 기술을 적용함
+>   - 스프링의 프록시 팩토리 빈을 이용하면 다이나믹 프록시 생성 방법에 DI를 적용함
+>   - 내부적으로 '템플릿/콜백'을 활용하는 스프링의 프록시 팩토리 빈 덕분에 '어드바이스'와 '포인트컷'은 프록시에서 분리될 수 있었고 여러 프록시에서 공유 가능함
+> 
+> - (4) 자동 프록시 생성 방법과 포인트 컷
+>   - 트랜잭션 적용 대상이 되는 빈마다 일일이 프록시 팩토리 빈을 설정해줘야함 
+>   - 스프링 컨테이너의 '빈 생성 후처리' 기법을 활용해 컨테이너 초기화 시점에서 자동으로 프록시를 만들어 주는 방법을 도입함
+> 
+> - (5) 부가기능 모듈화
+>   - 트랜잭션 같은 부가기능은 핵심 기능과 같은 방식으로 모듈화하기 매우 어려움
+>   - 왜냐하면, 부가기능은 독립적인 방식으로 존재해서는 적용되기 어렵기 때문
+>   - 즉, 타깃이 존재하지 않으면 '부가기능'은 의미가 없음
+>   - 많은 개발자는 '핵심기능을 담당하는 코드 여기저기에 흩어져 나타나야 했던 이런 부가기능을 어떻게 독립적인 모듈로 만들지 노력함'
+>     - DI, 데코레이터패턴, 다이나믹 프록시, 오브젝트 생성 후처리, 자동 프록시 생성, 어드바이저(어드바이스 + 포인트 컷)이 만들어짐
+>   - 여태까지 한 모든 작업은 '핵심기능에 부여되는 부가기능을 효과적으로 모듈화하는 방법을 찾는 것이었고, 어드바이스와 포인트 컷을 결합한 어드바이저가 단순하지만 이런 특성을 가진 모듈의 원시적인 형태로 만들어짐'
+
+
+<br>
+
+#### 👉 AOP : 애스팩트 지향 프로그래밍, 관점 지향 프로그래밍
+
+> - 애스팩트란 그 자체를 애플리케이션의 핵심 기능을 담고 있지는 않지만, 애플리케이션을 구성하는 중요한 한 가지 요소이고, 핵심기능에 부가되어 의미를 갖는 특별한 모듈을 의미함
+> - 애스팩트는 어드바이스와 포인트 컷을 함께 갖고 있음. 즉, 어드바이저는 단순한 형태의 애스팩트임
+> - 객체지향적인 코드를 작성했지만 부가기능이 핵심 기능의 모듈에 침투해 들어가면서 설계와 코드가 모두 지저분해짐
+> - <img src="/images/독립애스팩트를이용한부가기능의분리화모듈화.jpeg" width="400" height="400">
+> - 런타임시에는 왼쪽 그림처럼 각 부가기능 애스팩트는 자기가 필요한 위치에 다이나믹하게 합쳐짐(참여함)
+> - 하지만, 설계와 개발은 오른쪽 그림처럼 다른 특성을 띈 애스팩트들을 독립적인 관점으로 작성하게함
+> - 핵심적인 기능에서 부가적인 기능을 분리해서 애스팩트라는 독특한 모듈로 만들어서 설계하고 개발하는 방법을 '애스팩트 지향 프로그래밍(AOP)' 라고함
+>   - AOP는 OOP를 보조하는 기술임
+
+
+<br>
+
+#### 👉 AOP 적용 기술 
+
+> - 스프링에서 AOP를 적용하는 기술은 크게 2가지 방식이 있음
+> - (1) 프록시를 이용한 AOP
+>   - AOP에서의 핵심은 '프록시'를 이용한다는 것
+>   - 프록시를 만들어서 DI로 연결된 빈 사이에 적용해 타깃의 메서드 호출과정에 참여해서 부가기능을 제공하도록 만듦
+>   - 독립적으로 개발한 부가기능 모듈을 다양한 타깃 오브젝트의 메서드에 다이나믹하게 적용해줌
+> - (2) 바이트코드 생성과 조작을 통한 AOP
