@@ -3594,14 +3594,13 @@ public @interface Transactional {
 
 > - 클래스 레벨에 트랜잭션 설정을 부여할 수 있음
 > - 해당 어노테이션을 사용하면 '롤백'에 대한 공통속성을 지정할 수 있음
-> - @Transactional(propagation = Propagation.NEVER) 메서드에 부여하면 클래스 레벨의 @Transactional 설정을 무시함 
-
-
-
-
+> - @Transactional(propagation = Propagation.NEVER) 메서드에 부여하면 클래스 레벨의 @Transactional 설정을 무시함
 
 
 
 <br>
+<br>
 
-#### 👉 
+## 📌 07. 스프링 핵심 기술의 응용
+
+
